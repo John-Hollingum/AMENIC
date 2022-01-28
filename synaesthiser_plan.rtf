@@ -1,0 +1,65 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2513
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww10800\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 Instruments\
+\
+Can be monophonic or polyphonic\
+\
+Notes\
+\
+Will have an instrument, if it is monophonic, it will just have a stage. If it is polyphonic, it probably needs a stage layer, unless there are other ways of blending\
+\
+An example of a monophonic instrument would be a \'91background\'92. This would be just an opaque bitmap. I guess it could have some \'91camera pathing\'92\
+\
+For initial implementation we\'92d be interested note_on velocity and note. Mod and aftertouch are out of scope. I think sustain pedal \
+\
+Could have the camera as the only active thing with the notes being passive data structures. Only when the camera takes a frame would the current notes generate output. Against this is needing to know how long the note has been active -easy enough- so that we know at what point in the process it is. This would remove the need for a stage.\
+\
+ OK what kind of note classes are we going to support?\
+\
+Bitmap (typically background, but could be puppet) note-off action is just to stop showing it (ie no \'91decay\'92 phase)\
+Maybe have a \'91default\'92 image and any number of note-value-specific values. Initially no velocity sensitivity.\
+\
+Dollop and path. Show a vector dollop at a point on an (initially) linear path. Let\'92s start with a \'91falling\'92 blob where the x position is determined by the note value, the  Y position is related to the time from note_on. Just disappear on note off. Stretch, make size related to velocity. Mono or poly, whatever\'92s easier.\
+\
+On a note_on, a note is created as an instance of an instrument and placed in the hash of current notes indexed by note. If there\'92s already one (there shouldn\'92t be) it just gets replaced. When a note_off is received, the note is removed from the hash.\
+\
+At frame click time, the hash is scanned and appropriate images generated. \
+\
+User interface to allow the port to be associated with one of the two instrument types and to associate bitmap files with bitmap objects. Later there would be several parameters associated with dollops. Need a \'91start camera\'92 and \'91stop camera\'92\
+\
+Maybe allow the UI to specify a fixed background or \'91drone\'92\
+\
+Start with the bitmap instrument. Use the various horn-section bitmaps\
+\
+As we\'92re kind of vaguely considering pencil2d interaction, the default camera size is 800*600, Zooming the camera scales the bitmaps and vectors, but the output is still 800*600 (by default). The width and height can be independently changed to arbitrary values, not well-known presets. 800*600 has a 4:3 aspect ratio (or 16:12 if you prefer) certainly it\'92s more square than the usual ones. 800*450 would be 16:9.\
+\
+Standard 16:9 resolutions can be:\
+\
+3200 x 1800 (QHD+)\
+2560\'d71440 (1440p, QHD)\
+1920\'d71080 (1080p, FHD)\
+1600\'d7900 (HD+)\
+1366\'d7768 (WXGA)\
+1280\'d7720 (720p, HD)\
+960\'d7540 (qHD)\
+720\'d7480 (480p, SD)\
+\
+As Pencil2d isn\'92t really wedded to any particular resolution or aspect ratio, it would be sensible to go for a 16:9, and let\'92s fix it at 960*540 for now.\
+\
+It\'92s important that this doesn\'92t become \'91just another midi visualiser\'92, but embodies the Nagro Amenic concept.\
+\
+A useful extra on bitmap instruments would be the concept of a rest image. This would apply only in monophonic mode and would show when there was no note. I *think* this implies the concept of a \'91voice\'92 that can either be singing or not. It would be useful to sometimes include a completely transparent (empty) bitmap on some note values, particularly if there was a rest image.\
+\
+Maybe a voice could change its instrument in response to a control_change control=93, which seems to be a patch select. It may be sysx, could look that up, but not a priority.\
+\
+Make ui, implement drone. implement viewer (how active does that need to be?). I guess if the viewer is going to be sizable it\'92s going to get more complex, but for now if we just way it is 960*540 that\'92ll remove a layer of scaling. And it\'92s an OK sort of size. In terms of image combination, I think it would be enough to just use PIL::Image.paste\
+\
+At some stage, we\'92d want to store midi performance data, but that\'92s a whole nother can of worms\
+\
+\
+}
