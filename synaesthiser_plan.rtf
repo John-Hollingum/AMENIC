@@ -70,6 +70,65 @@ have scaling viewing for bitmaps with ability to apply same scalings to sets of 
 get voice edit to respond to midi note on\
 https://docs.python.org/3/library/multiprocessing.html#exchanging-objects-between-processes\
 \
+Need to tighten terminology and it makes sense to fall in with midi terminology as it makes sense to store and load performance data in that format. Obviously a frame-assembler can\'92t work from events, it needs to know what is current now, and, for more subtle, pathed voices, it needs to know how long it\'92s been current. So we\'92ll have a \'92sound board\'92 which is a kind of whiteboard that is updated by performance events and is used by the camera to assemble the pics by referring to voice info.\
+\
+In midi terms, a voice is a patch. As patch is a fairly rubbish term, I think I\'92ll stick with voice. Channel makes sense, and I don\'92t think the 16-channel restriction should be too troublesome for now. In terms of layering, it may make sense for channel order to be significant.\
+\
+Paths\
+\
+A path is a function that expresses how a value will change in response to pitch, velocity or elapsed time since note on (and possibly note off)\
+\
+The output of the function could be used to control\
+\
+Xpos\
+Ypos\
+XScale\
+YScale\
+brightness\
+hue\
+opacity\
+etc\
+\
+The function could be simple and linear or quite complex. It\'92s only maths after all and maths is cheap and quick. \
+\
+In addition to maths function paths, it would be possible to have \'91hand made\'92 map functions where the relationship between the input and the output is hand crafted. Essentially we\'92ve already got this with the mapping of note values to images.\
+\
+Exactly how the user expresses the maths functions is a bit more tricky. Something like \'91time elapsed since note on times two\'92 or \'91 sin of time elapsed\'92 \'97 possibly with some attenuating factor. \
+\
+Next step, I think to get bit.mid to \'91play\'92 a simple bitmap per note voice. so implement soundBoard, get player to write to it and camera to read it and display.\
+\
+What goes on soundBoard?\
+\
+Channel, start time, velocity, note\
+\
+What functions?\
+\
+stop all\
+\
+note on\
+\
+note off\
+\
+lock_board	causes all incoming events to just get queued rather than affecting the board\
+unlock_board   adds all queued events to the board then unlocks\
+\
+Get active notes\
+\
+mapping of channels would be external to the soundboard\
+\
+The reader locks, not the writer\
+\
+The UI needs changing so that we have a 16 row map of channels to voices done in a similar way to the notemap. It should be a fairly easy development, but for now we\'92ll just go ahead with the \'91default voice\'92 being the channel 0 voice.\
+\
+However, there are changes required to the UI just to exercise the engine.\
+\
+select a performance file -doesn\'92t need a UI\
+start camera and player -just needs a button\
+\
+Before I can iimplement merge, which flattens the layers into a frame, I need to have the images cached so add a qpixmap to imgtable when clicking the save button in the vedit or when loading an orchestra. But don\'92t save them with the orchestra. Well not for now anyway. Actually it\'92s a real faff NOT saving them, so for now we just save them. Sorry, it may be a faff but it\'92s necessary because you can\'92t json serialize a qpixmap\
+\
+\
+\
 \
 \
 }
