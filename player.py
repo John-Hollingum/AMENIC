@@ -9,7 +9,7 @@ port = mido.open_output('Steinberg UR22mkII  Port1')
 #	for msg in track:
 #		print(msg)
 
-for msg in MidiFile('/users/johnhollingum/Documents/AMENIC/test.mid'):
+for msg in MidiFile('/users/johnhollingum/Documents/AMENIC/2chan.mid'):
 	print(msg)
 	time.sleep(msg.time)
 	if not msg.is_meta:

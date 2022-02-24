@@ -127,6 +127,80 @@ start camera and player -just needs a button\
 \
 Before I can iimplement merge, which flattens the layers into a frame, I need to have the images cached so add a qpixmap to imgtable when clicking the save button in the vedit or when loading an orchestra. But don\'92t save them with the orchestra. Well not for now anyway. Actually it\'92s a real faff NOT saving them, so for now we just save them. Sorry, it may be a faff but it\'92s necessary because you can\'92t json serialize a qpixmap\
 \
+The mapping of midi channels to voices is not something the user is going to be concerned with. What characterises the separate performance contributions is where they are placed in the stack of layers. This isn\'92t a concern when the performances are triggering sounds but is most important for images. While we have a VCMap, it should be presented to the user as a map of layers to voices. Internally the channel number is important for the assignment of stored performance info to voices, but it\'92s just an internal. My guess is keep the channel number identical to the layer number. This would mean the current merge still works. if a layer is moved up or down, any associated performance information is fixed up with a different channel number.\
+\
+Oh and the CVMap should be presented the other way up, lowest at the bottom.\
+\
+Need quickly accessible information about whether a particular layer has performance info\
+\
+Right, there\'92s a number of things to save which we could do in a monolithic way or in an \'91exported\'92 kind of way.\
+\
+1 a voice\
+\
+2 the list of all current voices (currently called orchestra)\
+\
+3 the map of channels/layers to voices\
+\
+4 performance info associated with layers\
+\
+5 audio\
+\
+(1) only, styled as voice import/export makes sense\
+\
+(2,3,4,5) styled as a project sounds good \
+\
+I can see reading(4) makes sense if you want to base visuals on existing real music makes sense, but not export. Style it as \'91import midi performance\'92\
+\
+importing (5) makes sense, exporting, not\
+\
+import/export of (3) on its own is pretty much meaningless\
+\
+I think project load/save (replacing orchestra) makes sense. All 4 elements don\'92t have to be there.\
+\
+load project\
+\
+save project\
+\
+export voice\
+\
+import voice\
+\
+import audio\
+\
+import midi\
+\
+Try the import midi next and basically reproduce the functionality of \'91test\'92\
+\
+Maybe try with two channel data\
+\
+Think about implementing channel rest image\
+\
+Import audio, show waveform\
+\
+syncronised play !!!\
+\
+First play indicates that showing a waveform with a cursor isn\'92t as immediately important as experience with imovie and pencil2d suggested. If you\'92re cueing on audio rather than visually it\'92s not a big deal. might be useful for more sophisticated transport control, but not for the basic exercise of the engine\
+\
+So what next? work on recording performance or paths?\
+\
+Paths sounds more fun.\
+\
+A path is either a math function or a map. Maybe we can avoid maps if we break down to attack, sustain, decay and release. Not all of those phases need to be implemented\
+\
+How do you visualize, UI??\
+=====\
+When ptype changed for yscale by sync to xscale, how to update the combo\
+\
+maybe convert combos to drop down buttons. Maybe\
+better describe path parameters\
+actually implementing paths in the draw function\
+visualizing paths - will need to grab midi input etc\
+\
+midi record\
+save perfmance info at proj save\
+check dirty on exit \
+\
+\
 \
 \
 \

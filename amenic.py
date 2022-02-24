@@ -15,27 +15,89 @@ orchPath = "./"
 orchName = "Untitled"
 oExtn = 'orc'
 vExtn = 'vcf'
+projPath = "./"
+projName = "Untitled"
+pExtn = 'apr'
 voices = []
 presTable = []
 CVMap = []
 tWidth = 960
 tHeight = 540
 #fRate = 24
-fRate = 5
+fRate = 12
 ecount=0
 emptyImg = None
 board = None
-
-
-# I mean yes, I could define a voicelist class, and then instantiate one instance of it and
-# have it contain the list of voices and give it access methods. But really how would that help?
+midiFile = None
+audioFile = None
+listenChannel = None
+maxRange = 511
+rangeFrom7bit = int((maxRange +1) / 128)
+PTList = [ "fixed", "nflat", "vflat","sweep", "fade", "fall", "wobble"]
 
 def getVoiceByName(vName):
 	# mess(" there are "+str(len(voices))+" voices stored")
+	# print("in getvoicebyname, seeking "+vName)
 	for v in voices:
-		if v.vdata["name"] == vName:
+		if v.vdata['name'] == vName:
 			return v
 	return None
+
+class ipath():
+	def __init__(self,forUse,min,max,pt,ts,fv):
+		self.data = {
+			"ptype": None,
+			"timestep": None,
+			"fixedval": None,
+			'usedfor': forUse,
+			'lower': min,
+			'upper': max
+		}
+		if not pt in PTList:
+			error("ipath supplied with bad ptype "+pt)
+			quit()
+		if ts == None:
+			error("ipath not given valid timestep")
+			quit()
+		if pt == "fixed" and fv == None:
+			error("ipath. must supply a fixedval for ptype fixed")
+		self.data["ptype"] = pt
+		self.data["timestep"] = ts
+		self.data["fixedval"] = fv
+
+	def getVal(self,onTime,note,velocity):
+		global maxRange
+		global rangeFrom7bit
+
+		if pType == "fixed":
+			return self.data["fixedval"]
+
+		if pType == "nflat":
+			return int(note * rangeFrom7bit)
+
+		if pType == "vflat":
+			return int(velocity * rangeFrom7bit )
+
+		e = time.ctime() - onTime
+		nTimeSteps = e / timeStep
+		# depending on the duration of note and the timeStep value, it may
+		# go beyond maxRange before the note off
+		if pType == "sweep":
+			x = int(nTimeSteps) # can't really see a fudge factor is needed here. It's just a question of adjusting timeStep
+			return x
+
+		# like sweep, but initial value comes from velocity and falls
+		if pType == "fade":
+			return velocity * rangeFrom7bit - int(nTimeSteps)
+
+		# like fade, but based on note rather than velocity
+		if pType == "fall":
+			return note * rangeFrom7bit - int(nTimeSteps)
+
+		if pType == "wobble":
+			a = (nTimeSteps * 0.1) % math.pi
+			return int((sin(a) + 1) * velocity)
+
 
 class theatreLabel(QLabel):
 	def __init__(self, parent):
@@ -56,12 +118,19 @@ class theatreLabel(QLabel):
 			if img != None:
 				#print("[PaintEvent] using ok image")
 				#qp.drawPixmap(QRect(),img)
-				qp.drawPixmap(0,0,img)
+				if img == None:
+					print("Image is none")
+				else:
+					# we need layer to contain values for position, scale and
+					# opacity. That'll do for starters
+					qp.drawPixmap(0,0,img)
 			else:
 				pass # this just means there's no rest image
 				#print("[PaintEvent] trying to use null image")
 
 class soundBoard():
+	# registers all currently-playing notes whether from midi file or
+	# live performance
 	def __init__(self):
 		self.board = dict()
 		self.evLockQueue = []
@@ -120,6 +189,7 @@ class soundBoard():
 
 
 class player():
+	#pushes midi events out from a file onto the soundboard
 	def __init__(self,file):
 		self.myF = file
 		self.stopIt = False
@@ -174,49 +244,51 @@ class camera():
 		self.cmode = 'rehearsal'
 		self.myTheatre = t
 		self.cacheShow =''
+		self.imgCache = dict()
+
+	def imgFor(self,ch,n):
+		if len(self.imgCache) == 0:
+
+			for cv in CVMap:
+				if cv[1] != "<none>": # if the mapping isn't blank
+					mapIndex =15 - cv[0] # because it's backwards
+					vname = cv[1]
+					voice = getVoiceByName(vname)
+					if voice == None:
+						mess("lookup for voice '"+vname+"' produced no result")
+						quit()
+					self.imgCache[mapIndex] = dict()
+					for i in voice.vdata["imgTable"]:
+						print("mi = "+str(mapIndex)+" note = "+ str(i[0]))
+						self.imgCache[mapIndex][i[0]]= i[2] # cache[ch][note]= image
+
+		image = None
+		#print(self.imgCache.keys())
+		if n in self.imgCache[ch]: # if there's a direct map use it (Includes Rest)
+			image = self.imgCache[ch][n]
+		elif n > -1: # it's not a rest and there's no direct map
+			if -1 in self.imgCache[ch]: # if the default exists
+				image = self.imgCache[ch][-1]
+
+		return image
 
 	def render(self,ch,nv):
 		global CVMap
+		global emptyImg
 
-		print("[Render]",end = " " )
 		if len(nv) == 0:
-			print("rest", end = " ")
+			#print("rest", end = " ")
+			img = self.imgFor(ch,-2)
 
 		for n in nv.keys():
 			t = nv[n][0]
 			v = nv[n][1]
 			# so we have channel in ch, note in n and velocity in v
 			# and start time in t.
-			# for now, we're going to assume the channel is 0 and
-			# it will be mapped to the default voice. And we don't
-			# care about velocity or time for now.
-			# the only thing we need to do is to select the right
-			# image for the note.
-			ch = 0 # just in case it isn't
-			voice = CVMap[ch]
-			#print("note "+str(n), end = "|")
-
-			image = None
-			defI = None
-			useI = None
-			for i in voice.vdata["imgTable"]:
-				if i[0] == n:
-					#print("specific note map "+i[1])
-					image = i[2]
-				if i[0] == -1:
-					defIFName = i[1]
-					defI = i[2]
-			if image == None:
-				if defI != None:
-					print("default note map"+defIFName)
-					useI = defI
-			else:
-				useI = image
-			if useI == None:
-				err("useI was None. note was "+str(n))
-				quit()
-			return useI
-		#print(" ")
+			img = self.imgFor(ch,n)
+			if img == None:
+				img = emptyImg
+		return img
 
 	def merge(self,l):
 		# bang the list of qpixmaps in l into one merged image
@@ -250,7 +322,7 @@ class camera():
 
 
 class cvmModel(QAbstractTableModel):
-	header_labels = ['Chan No.', 'Voice' ]
+	header_labels = ['Layer', 'Voice', "Listen" ]
 
 	def __init__(self, data):
 		super().__init__()
@@ -355,26 +427,224 @@ class voice():
 	def __init__(self):
 		self.vdata = {
 			"imgTable": [ ],
-			"name": 'Untitled'
+			"name": 'Untitled',
+			"xpos": None ,
+			"ypos": None,
+			"xscale": None,
+			"yscale": None,
+			"opacity": None
 		}
+		self.vdata["xpos"] = ipath("xpos",0,tWidth,"fixed",0,0)
+		self.vdata["ypos"] = ipath("ypos",0,tHeight,"fixed",0,0)
+		self.vdata["xscale"] = ipath("yscale",-10,+10,"fixed",0,0)
+		self.vdata["yscale"] = ipath("xscale",-10,+10,"fixed",0,0)
+		self.vdata["opacity"] = ipath("opacity",0,100,"fixed",0,0)
 
 	def edit(self):
 		ve = vEditD(self)
 		ve.exec_()
 		return
 
+class PCombo(QComboBox):
+	def __init__(self,path):
+		global PTList
+		super().__init__()
+		for t in PTList:
+			self.addItem(t)
+		i = self.findText(path.data['ptype'])
+		self.setCurrentIndex(i)
+		self.myPath = path
+		self.currentTextChanged.connect(self.edPath)
+
+	def edPath(self):
+		self.myPath.data['timestep'] = 0
+		self.myPath.data['fixedval'] = 0
+		self.myPath.data['ptype'] = self.currentText()
+		pe = pathEdit(self.myPath)
+		pe.exec_()
+
+class PEButton(QPushButton):
+	def __init__(self,path):
+		super().__init__()
+		self.setText("Edit")
+		self.clicked.connect(self.eptype)
+
+		self.myPath = path
+
+	def eptype(self,idx):
+		pe = pathEdit(self.myPath)
+		pe.exec_()
+
+class vSlide(QSlider):
+	def __init__(self,min,max,linkedLabel,current,parent):
+		super().__init__(Qt.Horizontal,parent)
+		self.setMinimum(min)
+		self.setMaximum(max)
+		self.setValue(current)
+		self.setGeometry(30, 40, 200, 30)
+		self.myLinkedLabel = linkedLabel
+		self.valueChanged[int].connect(self.updLabel)
+
+	def updLabel(self):
+		self.myLinkedLabel.setText(str(self.value()))
+
+	def getVal(self):
+		return self.value()
+
+
+class pathEdit(QDialog):
+	def __init__(self,path):
+		super().__init__()
+		self.setModal(True)
+		self.myPath = path
+		self.initUI()
+
+	def saveOut(self):
+		if self.timeBased:
+			self.timeStep = self.timeSlide.getVal()
+			self.myPath.data['timestep'] = self.timeStep
+		else:
+			self.myPath.data['timestep'] = 0
+
+		self.fixedVal = self.fixSlide.getVal()
+		self.myPath.data['fixedval'] = self.fixedVal
+		self.accept()
+
+	def cancelOut(self):
+		self.reject()
+
+	def syncToX(self,idx):
+		global xScalePath
+
+		mess("by some miracle we sync these values to the X values")
+		self.myPath.data = xScalePath.data.copy()
+		self.myPath.data['usedfor'] = 'yscale'
+		self.accept()
+
+	def initUI(self):
+		self.setWindowTitle('Edit Attribute Path')
+		self.resize(350,200)
+		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+		# how we caption these and whether we show them at all will depend on ptype
+		forUse = self.myPath.data['usedfor']
+
+		pType = self.myPath.data['ptype']
+		self.forLabel = QLabel("Parameters for "+forUse+" Path Type "+pType)
+
+		self.timeBased = pType in [ "sweep", "fade", "fall", "wobble"]
+		if self.timeBased:
+			self.tLabel = QLabel("Time Period")
+			self.timeVLabel = QLabel()
+			self.timeStep = self.myPath.data["timestep"]
+			self.timeVLabel.setText(str(self.timeStep))
+			self.timeSlide = vSlide(0,100,self.timeVLabel,self.timeStep,self)
+
+		if forUse == "yscale":
+			self.syncXbtn = QPushButton("Sync to Xscale")
+			self.syncXbtn.clicked.connect(self.syncToX)
+
+		self.fixedVal = self.myPath.data["fixedval"]
+		self.fixLabel = QLabel("Fixed Param")
+		self.fixVLabel = QLabel()
+		self.fixVLabel.setText(str(self.fixedVal))
+		self.fixSlide = vSlide(self.myPath.data['lower'],self.myPath.data['upper'],self.fixVLabel,self.fixedVal,self)
+
+		self.btnSave = QPushButton()
+		self.btnSave.setText("Save")
+		self.btnSave.clicked.connect(self.saveOut)
+
+		self.btnCancel = QPushButton()
+		self.btnCancel.setText("Cancel")
+		self.btnCancel.clicked.connect(self.cancelOut)
+
+		vbox = QVBoxLayout()
+
+		vbox.addWidget(self.forLabel)
+
+		if forUse == "yscale":
+			vbox.addWidget(self.syncXbtn)
+
+		if self.timeBased:
+			thbox = QHBoxLayout()
+			thbox.addWidget(self.tLabel)
+			thbox.addWidget(self.timeSlide)
+			thbox.addWidget(self.timeVLabel)
+			vbox.addLayout(thbox)
+
+		phbox = QHBoxLayout()
+		phbox.addWidget(self.fixLabel)
+		phbox.addWidget(self.fixSlide)
+		phbox.addWidget(self.fixVLabel)
+		vbox.addLayout(phbox)
+
+		bhbox = QHBoxLayout()
+		bhbox.addWidget(self.btnCancel)
+		bhbox.addWidget(self.btnSave)
+
+		vbox.addLayout(bhbox)
+
+		self.setLayout(vbox)
+
 class CVMapEdit(QDialog):
 	def __init__(self):
 		super().__init__()
 		self.setModal(True)
 		self.initUI()
+		self.newCVMap = []
+
+	def checkNew(self,idx):
+		global voices
+		global CVMap
+
+		w = self.cvm.indexWidget(self.model.index(idx,1))
+		if w.currentText() == "+Add New":
+			v = voice()
+			v.edit()
+			if v != None:
+				if v.vdata["name"] == "Untitled":
+					v= None
+			if v != None:
+				voices.append(v)
+				w.addItem(v.vdata["name"]) # no doubt causes a kinda recursive call here
+				i = w.findText(v.vdata["name"])
+				w.setCurrentIndex(i)
+
+			else:
+				i = w.findText("<none>")
+				w.setCurrentIndex(i)
+
+	def toggleChecked(self,idx):
+		global listenChannel
+
+		w = self.cvm.indexWidget(self.model.index(idx, 2))
+		if w.checkState():
+			#mess("state changed, now checked")
+
+			# ensure it has a mapping
+			cbw = self.cvm.indexWidget(self.model.index(idx,1))
+			vname = cbw.currentText()
+			if vname == "<none>":
+				#mess("Can't listen on channel with no voice assigned")
+				w.setChecked(False)
+			else:
+				# ensure no others are checked
+				#mess("Unchecking all others")
+				for i in range(0,15):
+					if i != idx:
+						w = self.cvm.indexWidget(self.model.index(i, 2))
+						w.setChecked(False)
+					else:
+						listenChannel = self.model._data[i][0]
+		else:
+			#mess("state changed, now unchecked")
+			listenChannel = None
 
 	def comboAdd(self,idx):
 		selVoiceCombo = QComboBox()
 		selVoiceCombo.clear()
 		selVoiceCombo.addItem("<none>")
 		selVoiceCombo.addItem("+Add New")
-		# mess("in vcomboinit, attempting to load from voices which has "+str(len(voices))+" items")
 		vc =0
 		for v in voices:
 			vc += 1
@@ -384,19 +654,25 @@ class CVMapEdit(QDialog):
 		else:
 			i = selVoiceCombo.findText("<none>")
 		selVoiceCombo.setCurrentIndex(i)
+		selVoiceCombo.currentTextChanged.connect(partial(self.checkNew,idx))
 		self.cvm.setIndexWidget(self.model.index(idx, 1), selVoiceCombo)
 
+		listening = QCheckBox()
+		listening.setTristate(False)
+		listening.setChecked(False)
+		self.cvm.setIndexWidget(self.model.index(idx,2),listening)
+		listening.stateChanged.connect(partial(self.toggleChecked,idx))
 
 	def initUI(self):
 		self.setWindowTitle('Edit Channel/Voice mapping')
-		self.resize(300,600)
+		self.resize(350,600)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
 
 		self.cvm = QTableView()
 		CVPresTable = []
 
-		for row in range(0,16):
-			CVPresTable.append([ row, None])
+		for row in range(15,-1,-1):
+			CVPresTable.append([ row, None, ""])
 		self.model = cvmModel(CVPresTable)
 
 		self.cvm.setModel(self.model)
@@ -408,6 +684,7 @@ class CVMapEdit(QDialog):
 
 		self.cvm.setColumnWidth(0,55)
 		self.cvm.setColumnWidth(1,180)
+		self.cvm.setColumnWidth(2,50)
 
 		self.btnCancel = QPushButton('Cancel')
 		self.btnCancel.clicked.connect(self.cancelOut)
@@ -430,12 +707,12 @@ class CVMapEdit(QDialog):
 		self.reject()
 
 	def saveOut(self):
-		global VCMap
-		VCMap=[]
+		global CVMap
+		CVMap.clear()
 		for idx in range(0, 16):
-			VCMap.append([idx,self.model._data[idx][1] ] )
+			w = self.cvm.indexWidget(self.model.index(idx, 1))
+			CVMap.append([idx,w.currentText() ] )
 		self.accept()
-# !!! todo, the channel map isn't actually updating at save time
 
 class vEditD(QDialog):
 	def __init__(self, v:voice):
@@ -496,9 +773,14 @@ class vEditD(QDialog):
 		self.noteMap.setIndexWidget(self.model.index(idx, 2), btnGetImg)
 
 	def initUI(self, v:voice):
+		global xScalePath
+
 		self.setWindowTitle('Edit Voice')
 		self.resize(800,600)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+		xScalePath = v.vdata['xscale']
+
 		if v.vdata["name"] == "Untitled":
 			self.nameAcquired = False
 			self.new = True
@@ -546,7 +828,7 @@ class vEditD(QDialog):
 		definedNotes ={}
 		if len(v.vdata["imgTable"]) > 0:
 			for iti in range(0,len(v.vdata["imgTable"])):
-				mess("loading into note map "+v.vdata["imgTable"][iti][1])
+				#mess("loading into note map "+v.vdata["imgTable"][iti][1])
 				definedNotes[ v.vdata["imgTable"][iti][0] ] = iti
 
 		ci = -1
@@ -582,7 +864,33 @@ class vEditD(QDialog):
 		self.btnSave.clicked.connect(self.saveOut)
 		self.btnSave.setEnabled(self.nameAcquired)
 
+		self.xpP = v.vdata["xpos"]
+		self.xposLabel = QLabel("xpos")
+		self.xpPCombo = PCombo(self.xpP)
+		self.xpE = PEButton(self.xpP)
+
+		self.ypP = v.vdata["ypos"]
+		self.yposLabel = QLabel("ypos")
+		self.ypPCombo = PCombo(self.ypP)
+		self.ypE = PEButton(self.ypP)
+
+		self.xsP = v.vdata["xscale"]
+		self.xscaleLabel = QLabel("xscale")
+		self.xsPCombo = PCombo(self.xsP)
+		self.xsE = PEButton(self.xsP)
+
+		self.ysP = v.vdata["yscale"]
+		self.yscaleLabel = QLabel("yscale")
+		self.ysPCombo = PCombo(self.ysP)
+		self.ysE = PEButton(self.ysP)
+
+		self.opP = v.vdata["opacity"]
+		self.opacityLabel = QLabel("opacity")
+		self.opPCombo = PCombo(self.opP)
+		self.opE =PEButton(self.opP)
+
 		# Layout
+		hboxouter = QHBoxLayout()
 		vbox = QVBoxLayout()
 		hbox1=QHBoxLayout()
 		hbox1.addWidget(self.nameLabel)
@@ -609,7 +917,43 @@ class vEditD(QDialog):
 		hbox5.addWidget(self.btnCancel)
 		hbox5.addWidget(self.btnSave)
 		vbox.addLayout(hbox5)
-		self.setLayout(vbox)
+
+		vbox2 = QVBoxLayout()
+
+		hboxXPos = QHBoxLayout()
+		hboxXPos.addWidget(self.xposLabel)
+		hboxXPos.addWidget(self.xpPCombo)
+		hboxXPos.addWidget(self.xpE)
+		vbox2.addLayout(hboxXPos)
+
+		hboxYPos = QHBoxLayout()
+		hboxYPos.addWidget(self.yposLabel)
+		hboxYPos.addWidget(self.ypPCombo)
+		hboxYPos.addWidget(self.ypE)
+		vbox2.addLayout(hboxYPos)
+
+		hboxXScale = QHBoxLayout()
+		hboxXScale.addWidget(self.xscaleLabel)
+		hboxXScale.addWidget(self.xsPCombo)
+		hboxXScale.addWidget(self.xsE)
+		vbox2.addLayout(hboxXScale)
+
+		hboxYScale = QHBoxLayout()
+		hboxYScale.addWidget(self.yscaleLabel)
+		hboxYScale.addWidget(self.ysPCombo)
+		hboxYScale.addWidget(self.ysE)
+		vbox2.addLayout(hboxYScale)
+
+		hboxOpacity = QHBoxLayout()
+		hboxOpacity.addWidget(self.opacityLabel)
+		hboxOpacity.addWidget(self.opPCombo)
+		hboxOpacity.addWidget(self.opE)
+		vbox2.addLayout(hboxOpacity)
+
+		hboxouter.addLayout(vbox)
+		hboxouter.addLayout(vbox2)
+
+		self.setLayout(hboxouter)
 
 	def chName(self):
 		mess("Here we offer to change the name of the voice")
@@ -680,43 +1024,78 @@ class AmenicMain(QMainWindow):
 		self.loading = False
 		self.lastMess = None
 
-	def openOrch(self):
-		# mess("Here we'd open an orchestra file")
+	def addPath(self,forUse,min,max,pathAttr):
+		p = ipath(forUse,min,max,pathAttr['ptype'],pathAttr['timestep'],pathAttr['fixedval'])
+		return p
+
+	def openProj(self):
+		global audioFile
+		global midiFile
+
 		self.loading = True
-		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Orchestra File', orchPath,"Orchestra files (*.orc)")
-		# mess("then load json from "+fname)
+		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Project File', projPath,"Amenic Project files (*.apr)")
 		fh = open(fname,'r')
 		loadData = fh.read()
 		fh.close()
-		orch = json.loads(loadData)
+		proj = json.loads(loadData)
 		voices.clear() # DON'T do voices = [] as that declares a local voices!
+		CVMap.clear()
 
-		for vname in orch:
+		for vname in proj["voices"]:
+			# print("Loading voice "+vname)
 			v = voice()
-			v.vdata = orch[vname].copy()
+			v.vdata['name'] = vname
+			v.vdata['imgTable'] = proj["voices"][vname]['imgTable']
 			# cache the images in the imgTable
 			for nm in v.vdata["imgTable"]:
 				image = QPixmap(nm[1])
 				nm.append(image) # nm is a ref not a copy right?
 			voices.append(v)
+			v.vdata['xpos'] = self.addPath("xpos",0,tWidth,proj['voices'][vname]['xpos'])
+			v.vdata['ypos'] = self.addPath("ypos",0,tHeight,proj['voices'][vname]['ypos'])
+			v.vdata['xscale'] = self.addPath("xscale",-10,10,proj['voices'][vname]['xscale'])
+			v.vdata['yscale'] = self.addPath("yscale",-10,10,proj['voices'][vname]['yscale'])
+			v.vdata['opacity'] = self.addPath("opacity",0,100,proj['voices'][vname]['opacity'])
 
-		self.vComboInit(self.droneCombo)
+		for map in proj["cvmap"]:
+			CVMap.append(map)
+
+		midiFile = proj["midifile"]
+		self.setMidi()
+
+		audioFile = proj["audiofile"]
+		self.setAudio()
+
 		self.edComboInit()
 		self.loading = False
 
-	def saveOrch(self):
-		orch = dict()
+	def saveProj(self):
+		proj = dict()
+		proj["voices"]= dict()
 		for v in voices:
 			vname = v.vdata["name"]
-			orch[vname] = v.vdata
-			for nm in orch[vname]["imgTable"]:
+			proj['voices'][vname]= dict()
+			proj["voices"][vname]['imgTable'] = v.vdata['imgTable']
+			for nm in proj["voices"][vname]["imgTable"]:
 				# strip the cached image file
 				del nm[2]
-		saveData = json.dumps(orch)
-		n = orchPath + orchName + "."+oExtn
-		( sFileName, filter ) = QFileDialog.getSaveFileName(self,"Save Orchestra File",n,"Orchestra (*.orc)")
-		#mess("now save it as "+ sFileName)
-		# need to check for collisions, but for now just overwrite
+			proj['voices'][vname]['xpos'] = v.vdata['xpos'].data
+			proj['voices'][vname]['ypos'] = v.vdata['ypos'].data
+			proj['voices'][vname]['xscale'] = v.vdata['xscale'].data
+			proj['voices'][vname]['yscale'] = v.vdata['yscale'].data
+			proj['voices'][vname]['opacity'] = v.vdata['opacity'].data
+
+		proj["cvmap"] = []
+		for map in CVMap:
+			proj["cvmap"].append(map)
+
+		proj["midifile"] = midiFile
+		proj["audiofile"] = audioFile
+
+
+		saveData = json.dumps(proj)
+		n = projPath + projName + "."+pExtn
+		( sFileName, filter ) = QFileDialog.getSaveFileName(self,"Save Project File",n,"Amenic Project (*.apr)")
 		fh = open(sFileName,"w")
 		fh.write(saveData)
 		fh.close()
@@ -725,21 +1104,41 @@ class AmenicMain(QMainWindow):
 		mess("Here we'd export a single voice to a voice file")
 
 	def importVoice(self):
-		mess("Here we'd import a single voice from a voice file into the current orchestra")
+		mess("Here we'd import a single voice from a voice file into the current project")
 
-	def vComboInit(self,combo):
-		combo.clear()
-		combo.addItem("<none>")
-		combo.addItem("+Add New")
-		# mess("in vcomboinit, attempting to load from voices which has "+str(len(voices))+" items")
-		vc =0
-		for v in voices:
-			vc += 1
-			# mess(v.vdata["name"])
-			combo.addItem(v.vdata["name"])
-		# mess("inserted "+str(vc)+" items")
+	def setAudio(self):
+		global audioFile
+
+		if audioFile != None:
+			self.ssFileShow.setText(audioFile)
+			self.btnPlay.setEnabled(True)
+			# may as well initialise the audio player here
+			self.st = vlc.MediaPlayer("File://"+audioFile)
+		elif midiFile == None:
+				self.btnPlay.setEnabled(False)
+
+	def importAudio(self):
+		global audioFile
+
+		( audioFile, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Sound files (*.mp3)")
+		self.setAudio()
+
+	def setMidi(self):
+		global midiFile
+		if midiFile != None :
+			self.btnPlay.setEnabled(True)
+			self.mpFileShow.setText(midiFile)
+		elif audioFile == None:
+			self.btnPlay.setEnabled(False)
+
+	def importMidi(self):
+		global midiFile
+		(midiFile, filter) = QFileDialog.getOpenFileName(self,'Open Performance File','./',"Midi files (*.mid *.MID)")
+		self.setMidi()
 
 	def playslot(self):
+		# this pushes out the events in the midiFile in (roughly) the right timing
+		# and maintains the soundBoard with all currently playing notes
 		nextMess = self.p.playNext(self.lastMess)
 		if str(nextMess) != "None":
 			self.lastMess = nextMess
@@ -748,6 +1147,7 @@ class AmenicMain(QMainWindow):
 			QTimer.singleShot(ms,self.playslot)
 
 	def cameraSlot(self):
+		# the camera takes snaps of the soundboard and renders them
 		global theatre
 		self.c.exposure()
 		theatre.show()
@@ -755,32 +1155,78 @@ class AmenicMain(QMainWindow):
 
 		QTimer.singleShot(self.gateTimerPeriod,self.cameraSlot)
 
-	def test(self):
+	def startPerfTimer(self):
+		# flush out any midi events that may have come in while we were dealing with the event
+		for msg in self.inport.iter_pending():
+				pass
+		self.livePerfTimer.start(30)
+
+	def checkPerfSlot(self):
+		global board
+		global listenChannel
+
+		self.livePerfTimer.stop()
+		msg = self.inport.poll()
+		# because of some bug, mido's msg object doesn't support direct comparison with
+		# None, even though poll() is documented as either returning a message or a None
+		# so stringify it:
+		while str(msg) != "None":
+			msg.channel = listenChannel # most likely it's coming in on chan 0
+			if msg.type == 'note_on':
+				board.noteOn(msg)
+			elif msg.type == "note_off":
+				board.noteOff(msg)
+			msg = self.inport.poll()
+		self.startPerfTimer()
+
+	def play(self):
 		global CVMap
 		global theatre
 		global board
 		global fRate
-		CVMap= [ getVoiceByName("Oink") ]
+		global midiFile
 
-		# create camera
-		board = soundBoard()
-		self.gateTimerPeriod = int(1000 / fRate)
+		# this shouldn't happen, but:
+		if midiFile == None and audioFile == None:
+			err("Nothing to play")
+			return
 
-		self.c = camera(theatre)
-		self.cameraSlot()
+		if listenChannel != None:
+			self.inport = mido.open_input('Steinberg UR22mkII  Port1')
+			self.livePerfTimer = QTimer()
+			self.livePerfTimer.timeout.connect(self.checkPerfSlot)
+			self.startPerfTimer()
 
-		# create player
-		#self.p = player('/users/johnhollingum/Documents/sounds/Raw_midi/BIT.MID',board)
-		self.p = player('/users/johnhollingum/Documents/AMENIC/test.mid')
-		# start the camera
-		# c.rollEm('rehearse')
-		self.playslot()
+		# I'm rather suspecting that st player will be blocking. We'll see
+		if audioFile != None:
+			self.st.play()
+			self.btnStop.setEnabled(True)
 
+
+		if midiFile != None:
+
+			if len(CVMap)==0:
+				err("No voices assigned to layers. Can't render performance info")
+				return
+
+			# create camera
+			board = soundBoard()
+			self.gateTimerPeriod = int(1000 / fRate)
+
+			self.c = camera(theatre)
+			#start the camera
+			self.cameraSlot()
+
+			self.p = player(midiFile)
+			# start the midi player
+			self.playslot()
+		else:
+			msgBox("Audio only, no performance info")
 
 	def channelMap(self):
 		cvm = CVMapEdit()
 		cvm.exec_()
-
+		self.edComboInit() # new voices may have been added
 
 	def edComboInit(self):
 		self.edCombo.clear()
@@ -788,8 +1234,14 @@ class AmenicMain(QMainWindow):
 		i = self.edCombo.findText("<Select Voice To Edit>")
 		self.edCombo.setCurrentIndex(i)
 		for v in voices:
-			self.edCombo.addItem(v.vdata["name"])
+			self.edCombo.addItem(v.vdata['name'])
 
+	def newVoice(self):
+		v = voice()
+		v.edit()
+		if v != None:
+			voices.append(v)
+			self.edComboInit()
 
 	def initUI(self):
 		global emptyImg
@@ -804,15 +1256,15 @@ class AmenicMain(QMainWindow):
 		for row in range(0,16):
 			CVMap.append([ row, None])
 
-		openOAct = QAction(QIcon(), 'Open Orchestra', self)
-		openOAct.setShortcut('Ctrl+O')
-		openOAct.setStatusTip('Open Orchestra')
-		openOAct.triggered.connect(self.openOrch)
+		openPAct = QAction(QIcon(),'Open Project',self)
+		openPAct.setShortcut('Ctrl+O')
+		openPAct.setStatusTip('Open Project')
+		openPAct.triggered.connect(self.openProj)
 
-		saveOAct = QAction(QIcon(), 'Save Orchestra', self)
-		saveOAct.setShortcut('Ctrl+S')
-		saveOAct.setStatusTip('Save Orchestra')
-		saveOAct.triggered.connect(self.saveOrch)
+		savePAct = QAction(QIcon(), 'Save Project', self)
+		savePAct.setShortcut('Ctrl+S')
+		savePAct.setStatusTip('Save Project')
+		savePAct.triggered.connect(self.saveProj)
 
 		expVAct = QAction(QIcon(), 'Export Voice', self)
 		expVAct.setShortcut('Ctrl+E')
@@ -824,44 +1276,50 @@ class AmenicMain(QMainWindow):
 		impVAct.setStatusTip('Import Voice')
 		impVAct.triggered.connect(self.importVoice)
 
+		impMAct = QAction(QIcon(), 'Import Midi', self)
+		impMAct.setShortcut('Ctrl+M')
+		impMAct.setStatusTip('Import Midi')
+		impMAct.triggered.connect(self.importMidi)
+
+		impAAct = QAction(QIcon(), 'Import Audio', self)
+		impAAct.setShortcut('Ctrl+A')
+		impAAct.setStatusTip('Import Audio')
+		impAAct.triggered.connect(self.importAudio)
+
 		menubar = self.menuBar()
 		fileMenu = menubar.addMenu('&File')
-		fileMenu.addAction(openOAct)
-		fileMenu.addAction(saveOAct)
+		fileMenu.addAction(openPAct)
+		fileMenu.addAction(savePAct)
 		fileMenu.addAction(expVAct)
 		fileMenu.addAction(impVAct)
+		fileMenu.addAction(impMAct)
+		fileMenu.addAction(impAAct)
 
-		self.cMapBtn = QPushButton("Channel Map")
+		self.cMapBtn = QPushButton("Layers")
 		self.cMapBtn.clicked.connect(self.channelMap)
 
-		droneLabel = QLabel('&Drone Voice',self)
-		self.droneCombo = QComboBox(self)
-		self.vComboInit(self.droneCombo)
-		self.droneCombo.currentIndexChanged.connect(self.drSelChg)
-
-		droneLabel.setBuddy(self.droneCombo)
+		self.nVoiceBtn = QPushButton("New Voice")
+		self.nVoiceBtn.clicked.connect(self.newVoice)
 
 		edLabel = QLabel('&Edit Voice',self)
 		self.edCombo = QComboBox(self)
 		self.edComboInit()
 		self.edCombo.currentIndexChanged.connect(self.edSelChg)
 
-		self.testButton = QPushButton('Test')
-		self.testButton.clicked.connect(self.test)
-
-		ssLabel = QLabel('&Sound Source',self)
+		ssLabel = QLabel('Sound Source',self)
 		self.ssFileShow= QLineEdit(self)
 		self.ssFileShow.readOnly = True
-		ssButton = QPushButton('>')
-		ssButton.clicked.connect(self.getSound)
-		ssLabel.setBuddy(ssButton)
+
+		mpLabel = QLabel('Performance File',self)
+		self.mpFileShow= QLineEdit(self)
+		self.mpFileShow.readOnly = True
 
 		emptyImg = QPixmap("/Users/johnhollingum/Documents/AMENIC/Empty.png").scaled(tWidth,tHeight,2,1)
 		theatre = theatreLabel(self)
 		theatre.setPixmap(emptyImg)
 
 		self.btnPlay = QPushButton('&Play')
-		self.btnPlay.clicked.connect(self.playsound)
+		self.btnPlay.clicked.connect(self.play)
 		self.btnPlay.setEnabled(False)
 
 		self.btnStop = QPushButton('&Stop')
@@ -872,22 +1330,24 @@ class AmenicMain(QMainWindow):
 		hbox1 = QHBoxLayout()
 		hbox1.addWidget(self.cMapBtn)
 
-		hbox1.addWidget(droneLabel)
-		hbox1.addWidget(self.droneCombo)
+		hbox1.addWidget(self.nVoiceBtn)
 
 		hbox1.addWidget(edLabel)
 		hbox1.addWidget(self.edCombo)
 
 		vbox1.addLayout(hbox1)
 
-		vbox1.addWidget(self.testButton)
-
 		hbox2 = QHBoxLayout()
 		hbox2.addWidget(ssLabel)
 		hbox2.addWidget(self.ssFileShow)
-		hbox2.addWidget(ssButton)
 
 		vbox1.addLayout(hbox2)
+
+		hbox25 = QHBoxLayout()
+		hbox25.addWidget(mpLabel)
+		hbox25.addWidget(self.mpFileShow)
+
+		vbox1.addLayout(hbox25)
 		vbox1.addWidget(theatre)
 
 		hbox3 = QHBoxLayout()
@@ -902,47 +1362,15 @@ class AmenicMain(QMainWindow):
 		# Set the central widget of the Window.
 		self.setCentralWidget(container)
 
-	#def dvSelChg(self,i):
-	#	# this routine responds to an event that it, itself raises
-	#	if self.dvCombo.currentText() == "+Add New":
-	#		self.playerVn = self.createNewVoice()
-	#		if self.playerVn == None :
-	#			i = self.dvCombo.findText("<none>")
-	#			self.dvCombo.setCurrentIndex(i)
-	#		else:
-	#			self.droneCombo.addItem(self.playerVn)
-	#			self.dvCombo.addItem(self.playerVn)
-	#			self.edCombo.addItem(self.playerVn)
-	#			i = self.dvCombo.findText(self.playerVn)
-	#			self.dvCombo.setCurrentIndex(i)
-	#		return
-	#	elif self.dvCombo.currentText() != "<none>":
-	#		pass
-	#		# mess("use "+self.dvCombo.currentText())
-	#	else:
-	#		self.playerVn = None
-
-	def drSelChg(self,i):
-		if self.droneCombo.currentText() == "+Add New":
-			self.droneVn = self.createNewVoice()
-			if self.droneVn == None :
-				i = self.droneCombo.findText("<none>")
-				self.droneCombo.setCurrentIndex(i)
-			else:
-				self.droneCombo.addItem(self.droneVn)
-				#self.dvCombo.addItem(self.droneVn)
-				self.edCombo.addItem(self.playerVn)
-				i = self.droneCombo.findText(self.droneVn)
-				self.droneCombo.setCurrentIndex(i)
-				# find droneV from droneVn
-
 	def edSelChg(self,i):
 		if self.edCombo.currentText() != "<Select Voice To Edit>":
 			# mess("edit "+self.edCombo.currentText())
 			edv = getVoiceByName(self.edCombo.currentText())
 			if edv == None:
 				if not self.loading:
-					mess("Panic, no stored voice with name"+self.edCombo.currentText())
+					pass
+					# don't see what's wrong with this. It just means cancelled out
+					#mess("Panic, no stored voice with name"+self.edCombo.currentText())
 			else:
 				edv.edit()
 				vn = edv.vdata["name"]
@@ -969,15 +1397,7 @@ class AmenicMain(QMainWindow):
 		else:
 			return None
 
-	def getSound(self):
-		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Sound files (*.mp3)")
-		self.ssFileShow.setText(fname)
-		self.st = vlc.MediaPlayer("File://"+fname)
-		self.btnPlay.setEnabled(True)
 
-	def playsound(self):
-		self.st.play()
-		self.btnStop.setEnabled(True)
 
 	def stopsound(self):
 		self.st.stop()
