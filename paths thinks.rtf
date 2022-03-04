@@ -1,0 +1,86 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2513
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww10800\viewh14000\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 fixed\
+\
+===\
+the value of xpos should be [xx ] (validated between 0 and screenwidth )\
+\
+=\
+the value of ypos should be [xx] (validated between 0 an screenheight )\
+\
+=\
+\
+the value of opacity should be [xx ] (validated between 1 and 100)\
+\
+====\
+\
+vflat\
+\
+===\
+count [fromleft/fromright]\
+as value of velocity varies from [ x1] or below to [x2] or above, xpos should vary between [ x3] and [x4] pixels from left/right\
+\
+x1 validated as < x2 >=0 < 127\
+x2 validated as >x1 >0 <=127\
+x3 validated as <x4 >=0 < screenwidth\
+\
+=\
+[fade/emerge]\
+as value of velocity varies from [ x1] or below to [x2] or above, opacity of image should vary between [x3]  and [x4] (in an inverse fashion)\
+\
+x1 validated as < x2 >=0 < 127\
+x2 validated as >x1 >0 <=127\
+x3 validated as <x4 >=0 < 100 \
+note that whether fade or emerge, x3 is always less than x4\
+\
+====\
+\
+sweep\
+===\
+\
+I mean you could constrain the input times ie no changes before time 1, none after time 2 but I don\'92t *think* that would be useful\
+\
+[from left/right]\
+as value of time varies from 0 to [x1] xpos should vary from [x2] to [x3] pixels from left/right\
+\
+x1 is validated as somewhere between 1/framerate and \'85 oh I don\'92t know 20s\
+x2 validated as <x3 >=0 < screenwidth\
+x3 is validated as >x2 >0 <=screenwidth\
+\
+=\
+\
+[fade/emerge]\
+as value of time varies from 0 to [x1] opacity should vary from [x2 ] to [x3] (in an inverse fashion)\
+\
+====\
+\
+vfall\
+===\
+\
+[from left/right]\
+as velocity varies from [x1] or below to [x2] or above, the starting position of xpos should vary \
+\
+====\
+\
+accel\
+===\
+\
+as s = ut +(at^2)/2\
+\
+We need to know u ( initial velocity) t time a acceleration\
+that gives us S displacement, but we also need to know initial value. We also need to say whether s is displacement from max or from min. That\'92s separate from whether a is negative\
+\
+probably it\'92s OK to use omin as start pos and omax as some kind of output scaling. time period would indicate u in some way. Secondary time could iindicate acceleration. So stilll enough data. maybe. what if we decide to base u on input velocity? wouldn\'92t that mean the normal imin, imax, omin, imax all to handle u? then where would \
+\
+what next? wobble? Acceleration? \
+Record performance?\
+Polyphonic?\
+Smear?\
+\
+\
+}

@@ -194,6 +194,23 @@ When ptype changed for yscale by sync to xscale, how to update the combo\
 maybe convert combos to drop down buttons. Maybe\
 better describe path parameters\
 actually implementing paths in the draw function\
+\
+Need to present path controls in a way that is sensitive to the ptype AND the usedfor. The usedFor will affect the scaling of the raw output of the functions and the units in which it is presented.\
+\
+for movement (both X and Y) for sweep or fall, it should be possible to present the time period as the time in seconds that it takes to traverse one screen width or screen height. Changing the units would affect the presented value as it would convert.\
+\
+for opacity, it would present as the time taken to go from 100% to 0% . Fall mode, it\'92s rarely going to reach 100% in the first place. I guess the second parameter could be used to enforce a velocity threshold at which it would be 100%\
+\
+nflat and vflat for position, i guess it could be good to specify the range of x or y values that the 21-1whatever or 0-125 would map to.\
+\
+looks like we are wanting to be able to control the input range as well as the output range \
+\
+For scaling, the output range is very important as you\'92re not likely to want the initial scale to be 100%, whatever that means.\
+\
+\
+\
+\
+\
 visualizing paths - will need to grab midi input etc\
 \
 midi record\

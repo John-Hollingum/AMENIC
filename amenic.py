@@ -31,9 +31,10 @@ board = None
 midiFile = None
 audioFile = None
 listenChannel = None
-maxRange = 511
-rangeFrom7bit = int((maxRange +1) / 128)
-PTList = [ "fixed", "nflat", "vflat","sweep", "fade", "fall", "wobble"]
+PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble"]
+FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
+yauto = False
+bpm = None
 
 def getVoiceByName(vName):
 	# mess(" there are "+str(len(voices))+" voices stored")
@@ -43,61 +44,172 @@ def getVoiceByName(vName):
 			return v
 	return None
 
+def timeToBeats(s):
+	global bpm
+
+	if bpm == None:
+		error("Someone's messed up. You shouldn't be calling timeToBeats if the project has no BPM set")
+		quit()
+	b = bpm / 60 * s
+	return b
+
+def beatsToTime(b):
+	global bpm
+
+	if bpm == None:
+		error("Someone's messed up. You shouldn't be calling beatsToTime if the project has no BPM set")
+		quit()
+	s = b * 60 / bpm
+	return s
+
 class ipath():
-	def __init__(self,forUse,min,max,pt,ts,fv):
+	def __init__(self,forUse,pt):
 		self.data = {
 			"ptype": None,
 			"timestep": None,
-			"fixedval": None,
-			'usedfor': forUse,
-			'lower': min,
-			'upper': max
+			"imin": None,
+			"imax": None,
+			"omin": None,
+			"omax": None,
+			"ts2": None,
+			"invert": None,
+			'usedfor': None,
+			'maintar': None, # only significant on xsize
+			'scaling': None, # relationship between irange and orange
+			'native': None  # only significant on xsize
 		}
 		if not pt in PTList:
 			error("ipath supplied with bad ptype "+pt)
 			quit()
-		if ts == None:
-			error("ipath not given valid timestep")
+		if not forUse in FUList:
+			error("ipath supplied with bad forUse type "+forUse)
 			quit()
-		if pt == "fixed" and fv == None:
-			error("ipath. must supply a fixedval for ptype fixed")
-		self.data["ptype"] = pt
-		self.data["timestep"] = ts
-		self.data["fixedval"] = fv
+		self.data["ptype"]= pt
+		self.data["usedfor"] = forUse
+		self.setDefaults()
 
-	def getVal(self,onTime,note,velocity):
-		global maxRange
-		global rangeFrom7bit
+	def setDefaults(self):
 
-		if pType == "fixed":
-			return self.data["fixedval"]
+		forUse = self.data['usedfor']
+		pt = self.data['ptype']
 
-		if pType == "nflat":
-			return int(note * rangeFrom7bit)
+		self.data['omin'] = 0
+		if forUse in [ 'xpos', 'xsize']:
+			self.data['omax'] = tWidth
+		if forUse in [ 'ypos', 'ysize']:
+			self.data['omax'] = tHeight
+		if forUse == 'opacity':
+			if pt == 'fixed':
+				self.data['omin'] = 100
+			self.data['omax'] = 100
+		self.data['timestep'] = 0.5
+		self.data['maintar'] = True
 
-		if pType == "vflat":
-			return int(velocity * rangeFrom7bit )
+		if forUse == 'xsize':
+			self.data['maintar'] = True
+			self.data['native']  = True
 
-		e = time.ctime() - onTime
-		nTimeSteps = e / timeStep
-		# depending on the duration of note and the timeStep value, it may
-		# go beyond maxRange before the note off
-		if pType == "sweep":
-			x = int(nTimeSteps) # can't really see a fudge factor is needed here. It's just a question of adjusting timeStep
-			return x
+		if pt in ['nflat', 'nfall' ]:
+			self.data['imin'] = 21
+			self.data['imax'] = 108
+
+		if pt in ['vflat', 'vfall', 'vwobble']:
+			self.data['imin'] = 0
+			self.data['imax'] = 127
+
+		self.data['invert'] = False
+		self.calcScaling()
+		self.calcTop()
+
+	def setFromLoad(self,loadData):
+		self.data = loadData.copy()
+
+	def calcScaling(self):
+		if self.data['ptype'] in ['vflat', 'vfall', 'nflat','nfall']:
+			irange = self.data['imax'] - self.data['imin'] + 1
+			orange = int(self.data['omax']) - self.data['omin'] + 1
+			self.data['scaling'] = orange / irange
+		if self.data['ptype'] in ['sweep']:
+			orange = int(self.data['omax']) - self.data['omin'] + 1
+			self.data['scaling'] = orange / self.data['timestep']
+
+	def calcTop(self):
+		if self.data['invert']:
+			if self.data['usedfor'] == 'xpos':
+				self.data['top'] = tWidth
+			elif self.data['usedfor'] == 'ypos':
+				self.data['top'] = tHeight
+			elif self.data['usedfor'] == 'opacity':
+				self.data['top'] = 100
+
+	def present(self,usedfor,val):
+		if self.data['invert']:
+			if self.data['usedfor'] in ['xsize','ysize']:
+				val = self.data['omax'] - val
+				if val < 1 :
+					# weird stuff happens if it goes negative
+					val = 1
+			else:
+				val = self.data['top'] - val
+		if usedfor == 'opacity':
+			return val
+		if usedfor == 'xsize':
+			# return 0 if 'native', return normally if preserve AR, otherwise return -ive
+			if self.data['native']:
+				return 0
+			elif self.data['maintar']:
+				return int(val)
+			else:
+				# sizing will use independent x and y
+				return int(val * -1)
+		else:
+			return int(val)
+
+	def getVal(self,note,onTime,velocity):
+
+		if self.data['ptype'] == "fixed":
+			return self.present(self.data["usedfor"],self.data["omin"])
+
+		if self.data['ptype'] == "nflat":
+			# value basically proportional to input note value, scaled
+			# to the range omin to omax, but with the option of
+			# truncating the input sensitivity, so, for example the whole
+			# output range could be output my a range of just four notes
+			if note < self.data['imin']:
+				return self.data['omin']
+			if note > self.data['imax']:
+				return self.data['omax']
+			val = (note - self.data['imin']) * self.data['scaling'] + self.data['omin']
+			return self.present(self.data["usedfor"],val)
+
+		if self.data['ptype'] == "vflat":
+			if velocity < self.data['imin']:
+				return self.data['omin']
+			if velocity > self.data['imax']:
+				return self.data['omax']
+			val = (velocity - self.data['imin']) * self.data['scaling'] + self.data['omin']
+			return self.present(self.data["usedfor"],val)
+
+		e = time.time() - onTime
+
+		if self.data['ptype'] == "sweep":
+			val = e * self.data['scaling'] + self.data['omin']
+			return self.present(self.data["usedfor"],val)
 
 		# like sweep, but initial value comes from velocity and falls
-		if pType == "fade":
-			return velocity * rangeFrom7bit - int(nTimeSteps)
+		if self.data['ptype'] == "vfall":
+			val = (velocity - self.data['imin']) * self.data['scaling']
+			return self.present(self.data['usedfor'],val)
 
-		# like fade, but based on note rather than velocity
-		if pType == "fall":
-			return note * rangeFrom7bit - int(nTimeSteps)
+		# like vfall, but based on note rather than velocity
+		if self.data['ptype'] == "nfall":
+			val = (note - self.data['imin']) * self.data['scaling']
+			return self.present(self.data['usedfor'],val)
 
-		if pType == "wobble":
+		if self.data['ptype'] == "vwobble":
 			a = (nTimeSteps * 0.1) % math.pi
-			return int((sin(a) + 1) * velocity)
-
+			val = (sin(a) + 1) * velocity
+			return self.present(self.data['usedfor'],val)
 
 class theatreLabel(QLabel):
 	def __init__(self, parent):
@@ -114,19 +226,37 @@ class theatreLabel(QLabel):
 		baseImg = emptyImg.copy(QRect())
 		qp.drawPixmap(0,0,baseImg)
 
-		for img in self.layers:
-			if img != None:
-				#print("[PaintEvent] using ok image")
-				#qp.drawPixmap(QRect(),img)
-				if img == None:
-					print("Image is none")
-				else:
-					# we need layer to contain values for position, scale and
-					# opacity. That'll do for starters
-					qp.drawPixmap(0,0,img)
+		for l in self.layers:
+			# print("in paintEvent xpos: "+str(l['xpos'])+" ypos: "+str(l['ypos'])+" opacity: "+str(l['opacity']))
+			if l['img'] == None:
+				pass
+				#print("Image is none")
 			else:
-				pass # this just means there's no rest image
-				#print("[PaintEvent] trying to use null image")
+				# we need layer to contain values for position, scale and
+				# opacity. That'll do for starters
+				if l['opacity'] != 100:
+					o = l['opacity'] / 100
+					qp.setOpacity(o)
+					#print("drawing image at ",str(l['xpos'])+","+str(l['ypos'])+" at opacity "+ str(o))
+				else:
+					#print("drawing image at ",str(l['xpos'])+","+str(l['ypos'])+" at opacity, presumably 1")
+					pass
+				if l['opacity'] != 0:
+					#print(str(type(l['xpos']))+ " "+str(type(l['ypos']))+" "+str(type(l['img'])))
+					if l['xsize'] == 0 :
+						# use raw/native size
+						qp.drawPixmap(l['xpos'],l['ypos'],l['img'])
+					else:
+						xs = l['xsize']
+						if xs > 0:
+							# preserve aspect ratio
+							# specify excessive y size and ask for preserve aspect ratio based on X
+							qp.drawPixmap(l['xpos'],l['ypos'],l['img'].scaled(xs,tHeight,1,0))
+						else:
+							# independent x and y, so distorting
+							xs = xs * -1
+							ys = l['ysize']
+							qp.drawPixmap(l['xpos'],l['ypos'],l['img'].scaled(xs,ys,0,0))
 
 class soundBoard():
 	# registers all currently-playing notes whether from midi file or
@@ -137,7 +267,7 @@ class soundBoard():
 		self.locked = False
 
 	def addNoteOn(self,msg):
-		t = time.ctime()
+		t = time.time()
 		if msg.channel not in self.board.keys():
 			self.board[msg.channel] = {}
 		#print("[Board] chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(t) + " velocity "+ str(msg.velocity))
@@ -245,10 +375,11 @@ class camera():
 		self.myTheatre = t
 		self.cacheShow =''
 		self.imgCache = dict()
+		self.pathCache = dict()
 
-	def imgFor(self,ch,n):
+	def layerFor(self,ch,n,nvn):
+
 		if len(self.imgCache) == 0:
-
 			for cv in CVMap:
 				if cv[1] != "<none>": # if the mapping isn't blank
 					mapIndex =15 - cv[0] # because it's backwards
@@ -257,20 +388,58 @@ class camera():
 					if voice == None:
 						mess("lookup for voice '"+vname+"' produced no result")
 						quit()
+
+					# $$$ somewhere around here we should be doing some of the requests
+					# for caching calculated scaling factors associated with non-fixed paths
+					#print("mapindex "+str(mapIndex))
+					self.pathCache[mapIndex] = dict()
+					self.pathCache[mapIndex]['opacity'] = voice.vdata['opacity']
+					self.pathCache[mapIndex]['xpos']    = voice.vdata['xpos']
+					self.pathCache[mapIndex]['ypos']    = voice.vdata['ypos']
+					self.pathCache[mapIndex]['xsize']   = voice.vdata['xsize']
+					self.pathCache[mapIndex]['ysize']   = voice.vdata['ysize']
+
 					self.imgCache[mapIndex] = dict()
+					# $$$ This gives an index error if the voices have been edited in this session
 					for i in voice.vdata["imgTable"]:
-						print("mi = "+str(mapIndex)+" note = "+ str(i[0]))
+						#print("mi = "+str(mapIndex)+" note = "+ str(i[0]))
 						self.imgCache[mapIndex][i[0]]= i[2] # cache[ch][note]= image
 
 		image = None
 		#print(self.imgCache.keys())
 		if n in self.imgCache[ch]: # if there's a direct map use it (Includes Rest)
+			# print("setting specific note image")
 			image = self.imgCache[ch][n]
 		elif n > -1: # it's not a rest and there's no direct map
 			if -1 in self.imgCache[ch]: # if the default exists
+				# print("setting default image")
 				image = self.imgCache[ch][-1]
 
-		return image
+		l = dict()
+		l['img'] = image
+		#print(str(type(l['xpos']))+ " "+str(type(l['ypos']))+" "+str(type(l['img'])))
+		#print("type of image is "+str(type(l['img'])))
+		# the rest note (-2) isn't associated with a note, if the path is dependent on
+		# time, note velocity pitch, we're not able to calculate the current path value
+		# so, for now at least:
+		if n == -2:
+			now = time.time()
+
+			l['xpos'] = self.pathCache[ch]['xpos'].getVal(21,now,64)
+			l['ypos'] = self.pathCache[ch]['ypos'].getVal(21,now,64)
+			l['xsize'] = self.pathCache[ch]['xsize'].getVal(21,now,64)
+			l['ysize'] = self.pathCache[ch]['ysize'].getVal(21,now,64)
+			l['opacity'] = self.pathCache[ch]['opacity'].getVal(21,now,64)
+		else:
+			#print("channel : "+str(ch) + " note = "+str(n))
+			# print("nv 0 and 1 are "+str(nvn[0])+ " and "+ str(nvn[1]))
+			l['xpos'] = self.pathCache[ch]['xpos'].getVal(n,nvn[0],nvn[1]) # note, time velocity
+			l['ypos'] = self.pathCache[ch]['ypos'].getVal(n,nvn[0],nvn[1])
+			l['xsize'] = self.pathCache[ch]['xsize'].getVal(n,nvn[0],nvn[1])
+			l['ysize'] = self.pathCache[ch]['ysize'].getVal(n,nvn[0],nvn[1])
+			l['opacity'] = self.pathCache[ch]['opacity'].getVal(n,nvn[0],nvn[1])
+
+		return l
 
 	def render(self,ch,nv):
 		global CVMap
@@ -278,21 +447,22 @@ class camera():
 
 		if len(nv) == 0:
 			#print("rest", end = " ")
-			img = self.imgFor(ch,-2)
+			l = self.layerFor(ch,-2,nv)
 
 		for n in nv.keys():
 			t = nv[n][0]
 			v = nv[n][1]
 			# so we have channel in ch, note in n and velocity in v
 			# and start time in t.
-			img = self.imgFor(ch,n)
-			if img == None:
-				img = emptyImg
-		return img
+			l = self.layerFor(ch,n,nv[n])
 
-	def merge(self,l):
-		# bang the list of qpixmaps in l into one merged image
-		self.myTheatre.setLayers(l)
+			# print("in render note: "+str(n)+" xpos: "+str(l['xpos'])+" ypos: "+str(l['ypos'])+" opacity: "+str(l['opacity']))
+
+		return l
+
+	def merge(self,layers):
+		# bang the list of qpixmaps and path values in layers into one merged image
+		self.myTheatre.setLayers(layers)
 		self.myTheatre.show()
 
 	def exposure(self):
@@ -430,15 +600,15 @@ class voice():
 			"name": 'Untitled',
 			"xpos": None ,
 			"ypos": None,
-			"xscale": None,
-			"yscale": None,
+			"xsize": None,
+			"ysize": None,
 			"opacity": None
 		}
-		self.vdata["xpos"] = ipath("xpos",0,tWidth,"fixed",0,0)
-		self.vdata["ypos"] = ipath("ypos",0,tHeight,"fixed",0,0)
-		self.vdata["xscale"] = ipath("yscale",-10,+10,"fixed",0,0)
-		self.vdata["yscale"] = ipath("xscale",-10,+10,"fixed",0,0)
-		self.vdata["opacity"] = ipath("opacity",0,100,"fixed",0,0)
+		self.vdata["xpos"] = ipath("xpos","fixed")
+		self.vdata["ypos"] = ipath("ypos","fixed")
+		self.vdata["xsize"] = ipath("xsize","fixed")
+		self.vdata["ysize"] = ipath("ysize","fixed")
+		self.vdata["opacity"] = ipath("opacity","fixed")
 
 	def edit(self):
 		ve = vEditD(self)
@@ -457,11 +627,61 @@ class PCombo(QComboBox):
 		self.currentTextChanged.connect(self.edPath)
 
 	def edPath(self):
-		self.myPath.data['timestep'] = 0
-		self.myPath.data['fixedval'] = 0
+		global yauto
+		if not yauto:
+			self.myPath.data['timestep'] = 0
+			self.myPath.data['omin'] = 0
 		self.myPath.data['ptype'] = self.currentText()
-		pe = pathEdit(self.myPath)
+		self.myPath.setDefaults()
+		if not yauto:
+			pe = pathEdit(self.myPath)
+			pe.exec_()
+
+class xsizeCombo(QComboBox):
+	def __init__(self,xpath,ypath,ycombo):
+		global PTList
+		super().__init__()
+		self.xpath = xpath
+		self.ypath = ypath
+		self.ycombo = ycombo
+		for t in PTList:
+			self.addItem(t)
+		i = self.findText(self.xpath.data['ptype'])
+		self.setCurrentIndex(i)
+		self.currentTextChanged.connect(self.edPath)
+
+	def edPath(self):
+		global maintainAR
+		global yauto
+
+		self.xpath.data['timestep'] = 0
+		self.xpath.data['omin'] = 0
+		self.xpath.data['ptype'] = self.currentText()
+		pe = pathEdit(self.xpath)
 		pe.exec_()
+		# mess("in xsizecombo edpath, link = "+str(maintainAR))
+		if maintainAR:
+			# if we want the xsize to be the driver in maintainAR mode, we need Y to be banged up to a marginally excessive scaled size and
+			# set AspectRatioMode to KeepAspectRatio. If we are allowing independent x and y control, we just need to
+			# set AspectRatioMode to IgnoreAspectRatio
+			# I think that if we are not to create excessive 'padding' at the bottom of the image, we need to
+			# a) have an accurate idea of the original aspect ratio of the image being presented
+			# b) ensure that a reasonable Y value is maintained for every x change.
+			# this isn't so that the eventual AR is maintained, it's to ensure that the scaled image doesn't have extra dead space
+			# at the bottom
+			# at the point of setting the scaling, we don't know the original size of the image we are scaling, so we can't know its AR
+			# maybe when we load images we should calculate and store their aspect ratio. Then at scale time, a Y value could be calculated
+			# to correspond to the required X value
+			self.xpath.data['maintar'] = True
+			# none of this duplication is important except the change in ptype for appearance sake
+			self.ypath.data = self.xpath.data.copy()
+			self.ypath.data['usedfor'] = 'ysize'
+			yauto = True
+			i = self.ycombo.findText(self.ypath.data['ptype'])
+			self.ycombo.setCurrentIndex(i)
+			yauto = False
+		else:
+			self.xpath.data['maintar'] = False
 
 class PEButton(QPushButton):
 	def __init__(self,path):
@@ -500,55 +720,184 @@ class pathEdit(QDialog):
 		self.initUI()
 
 	def saveOut(self):
-		if self.timeBased:
-			self.timeStep = self.timeSlide.getVal()
-			self.myPath.data['timestep'] = self.timeStep
+
+		ptype = self.myPath.data['ptype']
+		if self.scaledFromTime:
+			self.myPath.data['timestep'] = float(self.tUnits1.text())
 		else:
 			self.myPath.data['timestep'] = 0
 
-		self.fixedVal = self.fixSlide.getVal()
-		self.myPath.data['fixedval'] = self.fixedVal
+		if ptype == 'fixed':
+			self.myPath.data['omin'] = int(self.fixVEdit.text())
+		else:
+			self.myPath.data['omin'] = int(self.oLower.text())
+			self.myPath.data['omax'] = int(self.oUpper.text())
+
+		if self.scaledFromInput:
+			self.myPath.data['imin'] = int(self.iLower.text())
+			self.myPath.data['imax'] = int(self.iUpper.text())
+
+		if self.scaledFromInput or self.scaledFromTime:
+			self.myPath.data['invert'] = self.inverseCheck.isChecked()
+
+		self.myPath.calcScaling()
+		self.myPath.calcTop()
+
+		print(self.myPath.data)
 		self.accept()
+
+	def invertCheck(self):
+		inverse = self.inverseCheck.isChecked()
+		self.nqualify.setText(self.ocaptionneg[inverse])
 
 	def cancelOut(self):
 		self.reject()
 
-	def syncToX(self,idx):
-		global xScalePath
-
-		mess("by some miracle we sync these values to the X values")
-		self.myPath.data = xScalePath.data.copy()
-		self.myPath.data['usedfor'] = 'yscale'
-		self.accept()
+	def changeTimeUnits(self):
+		mess("Here we'd change the time units")
 
 	def initUI(self):
+		global bpm
+
 		self.setWindowTitle('Edit Attribute Path')
-		self.resize(350,200)
+		self.resize(400,400)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+		maintar = self.myPath.data['maintar']
 
 		# how we caption these and whether we show them at all will depend on ptype
 		forUse = self.myPath.data['usedfor']
 
-		pType = self.myPath.data['ptype']
-		self.forLabel = QLabel("Parameters for "+forUse+" Path Type "+pType)
+		ptype = self.myPath.data['ptype']
+		self.forLabel = QLabel()
+		self.forLabel.setTextFormat(1)
+		self.forLabel.setText("<big>Parameters for <b>"+forUse+"</b> Path type <b>"+ptype+"</b></big>")
 
-		self.timeBased = pType in [ "sweep", "fade", "fall", "wobble"]
-		if self.timeBased:
-			self.tLabel = QLabel("Time Period")
-			self.timeVLabel = QLabel()
-			self.timeStep = self.myPath.data["timestep"]
-			self.timeVLabel.setText(str(self.timeStep))
-			self.timeSlide = vSlide(0,100,self.timeVLabel,self.timeStep,self)
+		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble"]
 
-		if forUse == "yscale":
-			self.syncXbtn = QPushButton("Sync to Xscale")
-			self.syncXbtn.clicked.connect(self.syncToX)
+		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble"]
 
-		self.fixedVal = self.myPath.data["fixedval"]
-		self.fixLabel = QLabel("Fixed Param")
-		self.fixVLabel = QLabel()
-		self.fixVLabel.setText(str(self.fixedVal))
-		self.fixSlide = vSlide(self.myPath.data['lower'],self.myPath.data['upper'],self.fixVLabel,self.fixedVal,self)
+		timeLower = 1 / fRate # not much point (I *think*) in allowing a time period less than the frame rate
+		timeUpper = 20        # I can't see (for the moment) wanting any effect to take longer than 20 seconds. Mostly
+						      # I'm expecting time steps to be < 1s
+		# these following are the default values of the ranges that the user will define. Don't confuse them with ranges of
+		# valid input for individual numbers
+		ilower = self.myPath.data['imin']
+		iupper = self.myPath.data['imax']
+
+		olower = self.myPath.data['omin']
+		oupper = self.myPath.data['omax']
+
+		ts = self.myPath.data['timestep']
+		inverse = self.myPath.data['invert']
+
+		if self.scaledFromInput:
+			if ptype in [ "nflat", "nfall"]:
+				iscalecaption = "As Note varies from "
+			if ptype in ["vflat","vfall","vwobble"]:
+				iscalecaption = "As velocity varies from "
+
+		if self.scaledFromInput or self.scaledFromTime:
+			if forUse == "xpos":
+				oscalecaption = "Vary output X value from "
+				ocaption2 = " to "
+				# indexed by Inverse
+				self.ocaptionneg = { False: "pixels from left", True: "pixels from right"}
+			if forUse == "ypos":
+				oscalecaption = "Vary output Y value from "
+				ocaption2 = " to "
+				self.ocaptionneg = { False: "pixels from bottom", True: "pixels from top"}
+
+			if forUse == "xsize":
+				oscalecaption = "Vary X size from "
+				ocaption2 = " to "
+				if maintar:
+					self.ocaptionneg = { False: " small to big, Y maintains aspect ratio", True: " big to small, Y mainains aspect ration"}
+				else:
+					self.ocaptionneg = { False: " small to big, independent of Y", True: " big to small, independent of Y"}
+
+			if forUse == "ysize":
+				# if you get here, you're not maintaining AR
+				oscalecaption = "Vary Y size from "
+				ocaption2 = " to "
+				self.ocaptionneg = { False: " small to big, independent of X", True: " big to small, independent of X" }
+
+			if forUse == "opacity":
+				oscalecaption = "Vary output opacity value from "
+				ocaption2 = "% to "
+				self.ocaptionneg = { False: "% in direct proportion", True: "% in inverse proportion"}
+
+		if self.scaledFromInput:
+			inputGBox = QGroupBox("Input Range Control")
+			self.iLowerLabel = QLabel(iscalecaption)
+			self.iLower = QLineEdit()
+			self.iLower.setText(str(ilower))
+			self.iUpperLabel = QLabel(" to ")
+			self.iUpper = QLineEdit()
+			self.iUpper.setText(str(iupper))
+			inputHBox = QHBoxLayout()
+			inputHBox.addWidget(self.iLowerLabel)
+			inputHBox.addWidget(self.iLower)
+			inputHBox.addWidget(self.iUpperLabel)
+			inputHBox.addWidget(self.iUpper)
+			inputGBox.setLayout(inputHBox)
+
+		if self.scaledFromInput or self.scaledFromTime:
+			self.outputGBox = QGroupBox("Output Range Control")
+			outputVBox = QVBoxLayout()
+			invHBox = QHBoxLayout()
+			self.inverseLabel = QLabel('Inverse ')
+			self.inverseCheck = QCheckBox()
+			self.inverseCheck.setChecked(inverse)
+			self.inverseCheck.stateChanged.connect(self.invertCheck)
+			self.oLowerLabel = QLabel(oscalecaption)
+			self.oLower = QLineEdit()
+			self.oLower.setText(str(olower))
+			self.oUpperLabel = QLabel(ocaption2)
+			self.oUpper = QLineEdit()
+			self.oUpper.setText(str(oupper))
+			self.nqualify = QLabel(self.ocaptionneg[inverse])
+			outputHBox = QHBoxLayout()
+			invHBox.addWidget(self.inverseLabel)
+			invHBox.addWidget(self.inverseCheck)
+			outputVBox.addLayout(invHBox)
+			outputHBox.addWidget(self.oLowerLabel)
+			outputHBox.addWidget(self.oLower)
+			outputHBox.addWidget(self.oUpperLabel)
+			outputHBox.addWidget(self.oUpper)
+			outputVBox.addLayout(outputHBox)
+			outputVBox.addWidget(self.nqualify)
+			self.outputGBox.setLayout(outputVBox)
+
+		if self.scaledFromTime:
+			self.timeGBox = QGroupBox("Time Control")
+			self.tUnitsLabel1 = QLabel("taking ")
+			self.tUnits1 = QLineEdit()
+			self.tUnits1.setText(str(ts))
+			self.tUnitsCombo = QComboBox()
+			self.tUnitsCombo.addItem("seconds")
+			if bpm != None:
+				self.tUnitsCombo.addItem("beats")
+			self.tUnitsCombo.currentTextChanged.connect(self.changeTimeUnits)
+			if ptype in ["nfall","vfall"]:
+				self.tUnitsLabel2 = QLabel("to go from initial output to 0")
+			else:
+				self.tUnitsLabel2 = QLabel("to go from min output to max output")
+			timeVBox = QVBoxLayout()
+			timeHBox = QHBoxLayout()
+			timeHBox.addWidget(self.tUnitsLabel1)
+			timeHBox.addWidget(self.tUnits1)
+			timeHBox.addWidget(self.tUnitsCombo)
+			timeVBox.addLayout(timeHBox)
+			timeVBox.addWidget(self.tUnitsLabel2)
+			self.timeGBox.setLayout(timeVBox)
+
+		if ptype == "fixed":
+			self.omin = self.myPath.data["omin"]
+			self.fixLabel = QLabel("Fixed value for "+forUse)
+			self.fixVEdit = QLineEdit()
+			self.fixVEdit.setText(str(self.omin))
+			#self.fixSlide = vSlide(self.myPath.data['omin'],self.myPath.data['omax'],self.fixVLabel,self.omin,self)
 
 		self.btnSave = QPushButton()
 		self.btnSave.setText("Save")
@@ -561,22 +910,20 @@ class pathEdit(QDialog):
 		vbox = QVBoxLayout()
 
 		vbox.addWidget(self.forLabel)
+		if self.scaledFromInput:
+			vbox.addWidget(inputGBox)
 
-		if forUse == "yscale":
-			vbox.addWidget(self.syncXbtn)
+		if self.scaledFromInput or self.scaledFromTime:
+			vbox.addWidget(self.outputGBox)
 
-		if self.timeBased:
-			thbox = QHBoxLayout()
-			thbox.addWidget(self.tLabel)
-			thbox.addWidget(self.timeSlide)
-			thbox.addWidget(self.timeVLabel)
-			vbox.addLayout(thbox)
+		if self.scaledFromTime:
+			vbox.addWidget(self.timeGBox)
 
-		phbox = QHBoxLayout()
-		phbox.addWidget(self.fixLabel)
-		phbox.addWidget(self.fixSlide)
-		phbox.addWidget(self.fixVLabel)
-		vbox.addLayout(phbox)
+		if ptype == "fixed":
+			fixHBox = QHBoxLayout()
+			fixHBox.addWidget(self.fixLabel)
+			fixHBox.addWidget(self.fixVEdit)
+			vbox.addLayout(fixHBox)
 
 		bhbox = QHBoxLayout()
 		bhbox.addWidget(self.btnCancel)
@@ -772,14 +1119,35 @@ class vEditD(QDialog):
 		btnGetImg.clicked.connect(partial(self.getImg, idx))
 		self.noteMap.setIndexWidget(self.model.index(idx, 2), btnGetImg)
 
+	def toggleSizeControl(self):
+		self.nativeSize = not self.sizeGBox.isChecked()
+		self.myv.vdata['xsize'].data['native'] = self.nativeSize
+
+	def toggleSync(self):
+		global maintainAR
+		global yauto
+
+		maintainAR = not maintainAR
+		self.ysPCombo.setEnabled(not maintainAR)
+		self.ysE.setEnabled(not maintainAR)
+		if maintainAR:
+			# do the sync right now. Most of this is just for appearance
+			self.myv.vdata['xsize'].data['maintar'] = True
+			self.myv.vdata['ysize'].data = self.myv.vdata['xsize'].data.copy()
+			self.myv.vdata['ysize'].data['usedfor'] = 'ysize'
+			yauto = True
+			i = self.ysPCombo.findText(self.myv.vdata['xsize'].data['ptype'])
+			self.ysPCombo.setCurrentIndex(i)
+			yauto = False
+		else:
+			self.myv.vdata['xsize'].data['maintar'] = False
+
 	def initUI(self, v:voice):
-		global xScalePath
+		global maintainAR
 
 		self.setWindowTitle('Edit Voice')
 		self.resize(800,600)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
-
-		xScalePath = v.vdata['xscale']
 
 		if v.vdata["name"] == "Untitled":
 			self.nameAcquired = False
@@ -874,15 +1242,28 @@ class vEditD(QDialog):
 		self.ypPCombo = PCombo(self.ypP)
 		self.ypE = PEButton(self.ypP)
 
-		self.xsP = v.vdata["xscale"]
-		self.xscaleLabel = QLabel("xscale")
-		self.xsPCombo = PCombo(self.xsP)
+
+		self.xsP = v.vdata["xsize"]
+		self.xsizeLabel = QLabel("xsize")
 		self.xsE = PEButton(self.xsP)
 
-		self.ysP = v.vdata["yscale"]
-		self.yscaleLabel = QLabel("yscale")
+		maintainAR = v.vdata['xsize'].data['maintar']
+		self.nativeSize = v.vdata['xsize'].data['native']
+
+		self.maintainARLabel = QLabel("Sync to X Scaling")
+		self.maintainARCb = QCheckBox()
+		self.maintainARCb.setTristate(False)
+		self.maintainARCb.setChecked(maintainAR)
+		self.maintainARCb.stateChanged.connect(self.toggleSync)
+
+		self.ysP = v.vdata["ysize"]
+		self.ysizeLabel = QLabel("ysize")
 		self.ysPCombo = PCombo(self.ysP)
+		self.ysPCombo.setEnabled(not maintainAR)
 		self.ysE = PEButton(self.ysP)
+		self.ysE.setEnabled(not maintainAR)
+
+		self.xsPCombo = xsizeCombo(self.xsP,self.ysP,self.ysPCombo)
 
 		self.opP = v.vdata["opacity"]
 		self.opacityLabel = QLabel("opacity")
@@ -932,24 +1313,38 @@ class vEditD(QDialog):
 		hboxYPos.addWidget(self.ypE)
 		vbox2.addLayout(hboxYPos)
 
-		hboxXScale = QHBoxLayout()
-		hboxXScale.addWidget(self.xscaleLabel)
-		hboxXScale.addWidget(self.xsPCombo)
-		hboxXScale.addWidget(self.xsE)
-		vbox2.addLayout(hboxXScale)
-
-		hboxYScale = QHBoxLayout()
-		hboxYScale.addWidget(self.yscaleLabel)
-		hboxYScale.addWidget(self.ysPCombo)
-		hboxYScale.addWidget(self.ysE)
-		vbox2.addLayout(hboxYScale)
-
 		hboxOpacity = QHBoxLayout()
 		hboxOpacity.addWidget(self.opacityLabel)
 		hboxOpacity.addWidget(self.opPCombo)
 		hboxOpacity.addWidget(self.opE)
 		vbox2.addLayout(hboxOpacity)
 
+		self.sizeGBox = QGroupBox("Use Image Size Control")
+		self.sizeGBox.setCheckable(True)
+		self.sizeGBox.setChecked(not self.nativeSize)
+		self.sizeGBox.clicked.connect(self.toggleSizeControl)
+		vboxSize = QVBoxLayout()
+
+		hboxxsize = QHBoxLayout()
+		hboxxsize.addWidget(self.xsizeLabel)
+		hboxxsize.addWidget(self.xsPCombo)
+		hboxxsize.addWidget(self.xsE)
+		vboxSize.addLayout(hboxxsize)
+
+		hboxXSync = QHBoxLayout()
+		hboxXSync.addWidget(self.maintainARLabel)
+		hboxXSync.addWidget(self.maintainARCb)
+		vboxSize.addLayout(hboxXSync)
+
+		hboxysize = QHBoxLayout()
+		hboxysize.addWidget(self.ysizeLabel)
+		hboxysize.addWidget(self.ysPCombo)
+		hboxysize.addWidget(self.ysE)
+		vboxSize.addLayout(hboxysize)
+
+		self.sizeGBox.setLayout(vboxSize)
+
+		vbox2.addWidget(self.sizeGBox)
 		hboxouter.addLayout(vbox)
 		hboxouter.addLayout(vbox2)
 
@@ -1024,8 +1419,9 @@ class AmenicMain(QMainWindow):
 		self.loading = False
 		self.lastMess = None
 
-	def addPath(self,forUse,min,max,pathAttr):
-		p = ipath(forUse,min,max,pathAttr['ptype'],pathAttr['timestep'],pathAttr['fixedval'])
+	def addPath(self,forUse,pathAttr):
+		p = ipath(forUse,pathAttr['ptype'])
+		p.setFromLoad(pathAttr)
 		return p
 
 	def openProj(self):
@@ -1046,16 +1442,19 @@ class AmenicMain(QMainWindow):
 			v = voice()
 			v.vdata['name'] = vname
 			v.vdata['imgTable'] = proj["voices"][vname]['imgTable']
-			# cache the images in the imgTable
+			# cache the images and aspect ratio in the imgTable. So imgtable rows are:
+			# note number, image filename, qpixmap, aspect ratio
 			for nm in v.vdata["imgTable"]:
 				image = QPixmap(nm[1])
 				nm.append(image) # nm is a ref not a copy right?
+				ar = image.height() / image.width() # multiply target width by ar to get target height
+				nm.append(ar)
 			voices.append(v)
-			v.vdata['xpos'] = self.addPath("xpos",0,tWidth,proj['voices'][vname]['xpos'])
-			v.vdata['ypos'] = self.addPath("ypos",0,tHeight,proj['voices'][vname]['ypos'])
-			v.vdata['xscale'] = self.addPath("xscale",-10,10,proj['voices'][vname]['xscale'])
-			v.vdata['yscale'] = self.addPath("yscale",-10,10,proj['voices'][vname]['yscale'])
-			v.vdata['opacity'] = self.addPath("opacity",0,100,proj['voices'][vname]['opacity'])
+			v.vdata['xpos'] = self.addPath("xpos",proj['voices'][vname]['xpos'])
+			v.vdata['ypos'] = self.addPath("ypos",proj['voices'][vname]['ypos'])
+			v.vdata['xsize'] = self.addPath("xsize",proj['voices'][vname]['xsize'])
+			v.vdata['ysize'] = self.addPath("ysize",proj['voices'][vname]['ysize'])
+			v.vdata['opacity'] = self.addPath("opacity",proj['voices'][vname]['opacity'])
 
 		for map in proj["cvmap"]:
 			CVMap.append(map)
@@ -1077,12 +1476,18 @@ class AmenicMain(QMainWindow):
 			proj['voices'][vname]= dict()
 			proj["voices"][vname]['imgTable'] = v.vdata['imgTable']
 			for nm in proj["voices"][vname]["imgTable"]:
-				# strip the cached image file
-				del nm[2]
+				idx = 0
+				for x in nm:
+					idx += 1
+					#print(str(idx)+": "+str(type(x)))
+				# strip the cached image file and calculated aspect ratio, but they may not have been added
+				# yet if just editing voices and saving
+				while len(nm) > 2:
+					del nm[2]
 			proj['voices'][vname]['xpos'] = v.vdata['xpos'].data
 			proj['voices'][vname]['ypos'] = v.vdata['ypos'].data
-			proj['voices'][vname]['xscale'] = v.vdata['xscale'].data
-			proj['voices'][vname]['yscale'] = v.vdata['yscale'].data
+			proj['voices'][vname]['xsize'] = v.vdata['xsize'].data
+			proj['voices'][vname]['ysize'] = v.vdata['ysize'].data
 			proj['voices'][vname]['opacity'] = v.vdata['opacity'].data
 
 		proj["cvmap"] = []
@@ -1093,7 +1498,7 @@ class AmenicMain(QMainWindow):
 		proj["audiofile"] = audioFile
 
 
-		saveData = json.dumps(proj)
+		saveData = json.dumps(proj, indent = 1)
 		n = projPath + projName + "."+pExtn
 		( sFileName, filter ) = QFileDialog.getSaveFileName(self,"Save Project File",n,"Amenic Project (*.apr)")
 		fh = open(sFileName,"w")
