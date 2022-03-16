@@ -1,16 +1,21 @@
+from PIL.ImageQt import ImageQt
+from PIL import Image
+import numpy as np
+import cv2
 import jsonpickle # pip install jsonpickle
 import json
 import time
 import mido
-from mido import MidiFile
+from mido import MidiFile, MidiTrack, Message
 from decimal import *
 from functools import partial
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
-from PyQt5.QtGui import QPixmap, QPainter, QPalette, QIcon, QColor, QStandardItemModel, QStandardItem
+from PyQt5.QtGui import QPixmap, QPainter, QPalette, QIcon, QColor, QStandardItemModel, QStandardItem, QGuiApplication
 import sys
 import vlc
 
+loglevel = 2
 orchPath = "./"
 orchName = "Untitled"
 oExtn = 'orc'
@@ -27,6 +32,7 @@ tHeight = 540
 fRate = 12
 ecount=0
 emptyImg = None
+blackImg = None
 board = None
 midiFile = None
 audioFile = None
@@ -35,7 +41,142 @@ PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble"]
 FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
 yauto = False
 bpm = None
+iimf = 'q' # internal image manipulation format, q for qpixmap, c for cv
 
+# bunch of general utility functions
+
+# Convert an opencv image to QPixmap
+def convertCvImage2QtImage(cv_img):
+	rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+	PIL_image = Image.fromarray(rgb_image).convert('RGB')
+	return QPixmap.fromImage(ImageQt(PIL_image))
+
+def qt2cv(qpm):
+	# convert qpixmap to qimage
+	img = qpm.toImage()
+	buffer = QBuffer()
+	buffer.open(QBuffer.ReadWrite)
+	# encode qimage as a png
+	img.save(buffer, "PNG")
+	# read from the buffer as PIL image
+	pil_image = Image.open(io.BytesIO(buffer.data()))
+	# make it look more like an opencv image:
+	open_cv_image = np.array(pil_image)
+	# Convert RGB to BGR
+	open_cv_image = open_cv_image[:, :, ::-1].copy()
+	return open_cv_image
+
+def overlay_transparent(background, overlay, x, y):
+	# Taken from https://stackoverflow.com/questions/40895785/using-opencv-to-overlay-transparent-image-onto-another-image
+	# note that it overwrites background
+
+	background_width = background.shape[1]
+	background_height = background.shape[0]
+
+	# if the overlay image is placed beyond the background image, just
+	# return the background image
+	if x >= background_width or y >= background_height:
+		return background
+
+	# how big is the overlay?
+	h, w = overlay.shape[0], overlay.shape[1]
+
+	# will the overlay go beyond the bounds of the background?
+	if x + w > background_width:
+		w = background_width - x
+		overlay = overlay[:, :w]
+
+	if y + h > background_height:
+		h = background_height - y
+		overlay = overlay[:h]
+
+	# if the overlay image doesn't have a transparency channel
+	# construct one for it, but bear in mind that for jpegs, this will
+	# effectively make a white rectangular background for the extent of
+	# the file's dimensions
+	if overlay.shape[2] < 4:
+		overlay = np.concatenate(
+			[
+				overlay,
+				np.ones((overlay.shape[0], overlay.shape[1], 1), dtype = overlay.dtype) * 255
+			],
+			axis = 2,
+		)
+
+	# this puts the RGB info into overlay_image and puts the transparency info into mask
+	overlay_image = overlay[..., :3] # keep all dimensions except the transparency channel
+	mask = overlay[..., 3:] / 255.0  # keep only the transparency channel
+
+	# my added debug
+	if loglevel == 3:
+		print('background ')
+		print(background.shape)
+		print('mask ')
+		print(mask.shape)
+		print('overlay_image')
+		print(overlay_image.shape)
+	# ends
+
+	# here a miracle occurs:
+	background[y:y+h, x:x+w] = (1.0 - mask) * background[y:y+h, x:x+w] + mask * overlay_image
+
+	return background
+
+def overlaySzOpAt(background,overlay,xsize,ysize,opacity,xpos,ypos):
+	print("xsize"+str(xsize)+" ysize "+str(ysize)+" opacity "+str(opacity)+" xpos "+str(xpos)+ " ypos "+str(ypos))
+	if ysize == -1: # retain AR
+		ar =  overlay.shape[0] / overlay.shape[1]
+		ysize = int(xsize * ar)
+
+	opacity = opacity / 100
+
+	if opacity == 1:
+		bg = background
+	else:
+		bg = background.copy()
+
+	if xsize != 0: # use scaled size
+		print("scaled")
+		comb1 = overlay_transparent(bg,cv2.resize(overlay,(xsize,ysize)),xpos,ypos)
+	else: # use native size
+		print("native size")
+		comb1 = overlay_transparent(bg,overlay,xpos,ypos)
+
+	if opacity < 1:
+		alpha =opacity
+		beta = 1 - opacity
+		combined = cv2.addWeighted(background,alpha,comb1,beta,0.0)
+	else:
+		combined = comb1
+	return combined
+
+def to_name(nn):
+	nnt = [ "C  ","C#","D  ","D#","E  ","F  ","F#","G  ","G#","A  ", "A#","B  "]
+	on = int(nn / 12) -1 # opinion seems to differ about whether it's necessary to subtract 1
+	nis = nn % 12
+	nname = nnt[nis]
+	return nname + " " + str(on)
+
+def mess(mymess):
+	msg = QMessageBox()
+	msg.setIcon(QMessageBox.Information)
+	msg.setText(mymess)
+	msg.setStandardButtons(QMessageBox.Ok)
+	retval = msg.exec_()
+
+def warn(mymess):
+	msg = QMessageBox()
+	msg.setIcon(QMessageBox.Warning)
+	msg.setText(mymess)
+	msg.setStandardButtons(QMessageBox.Ok)
+	retval = msg.exec_()
+
+def err(mymess):
+	msg = QMessageBox()
+	msg.setIcon(QMessageBox.Critical)
+	msg.setText(mymess)
+	msg.setStandardButtons(QMessageBox.Ok)
+	retval = msg.exec_()
 def getVoiceByName(vName):
 	# mess(" there are "+str(len(voices))+" voices stored")
 	# print("in getvoicebyname, seeking "+vName)
@@ -43,6 +184,31 @@ def getVoiceByName(vName):
 		if v.vdata['name'] == vName:
 			return v
 	return None
+
+def newTiming(t):
+	global ticksPerBeat
+	global bpm
+	global beatDuration
+	global tickDuration
+
+	bpm = 60000000/t
+	beatDuration = t
+	tickDuration = t/ticksPerBeat
+
+def midiTiming(mfile):
+	global beatDuration
+	global tickDuration
+	global ticksPerBeat
+	global bpm
+
+	mf = MidiFile(mfile)
+	# info from header
+	ticksPerBeat = mf.ticks_per_beat
+	# find the first set_tempo message
+	for msg in mf:
+		if msg.type == 'set_tempo':
+			newTiming(msg.tempo)
+			return
 
 def timeToBeats(s):
 	global bpm
@@ -62,6 +228,7 @@ def beatsToTime(b):
 	s = b * 60 / bpm
 	return s
 
+# home of the ipath functions
 class ipath():
 	def __init__(self,forUse,pt):
 		self.data = {
@@ -211,6 +378,7 @@ class ipath():
 			val = (sin(a) + 1) * velocity
 			return self.present(self.data['usedfor'],val)
 
+# class that does the painting of the theatre display on the main window
 class theatreLabel(QLabel):
 	def __init__(self, parent):
 		super().__init__(parent=parent)
@@ -222,16 +390,39 @@ class theatreLabel(QLabel):
 		self.layers = l
 
 	def paintEvent(self, e):
+		global iimf
+		global emptyImg
+
 		qp = QPainter(self)
-		baseImg = emptyImg.copy(QRect())
-		qp.drawPixmap(0,0,baseImg)
+		if iimf == 'q':
+			baseImg = emptyImg.copy(QRect())
+			qp.drawPixmap(0,0,baseImg)
+		else:
+			# having a base layer that is empty implies creating a mat with a
+			# transparency channel. That is incompatible with overlay_transparent
+			# as the background image is assumed to have only RGB channels. And
+			# what's the benefit of having a transparent bottom layer? it will get
+			# converted to a 3-channel image when the overlay is applied
+			baseImg = blackImg.copy()
 
 		for l in self.layers:
-			# print("in paintEvent xpos: "+str(l['xpos'])+" ypos: "+str(l['ypos'])+" opacity: "+str(l['opacity']))
-			if l['img'] == None:
-				pass
-				#print("Image is none")
+			if str(type(l['img'])) == "<class 'NoneType'>":
+				continue
+			if iimf == 'c':
+				if l['xsize'] < 0: # independent x and y
+					ys = l['ysize']
+					xs = int(l['xsize'] * -1)
+				elif l['xsize']== 0:
+					ys = 0 # use native size
+					xs = 0
+				else:
+					# retain AR based on x size
+					ys = -1
+					xs = l['xsize']
+				baseImg = overlaySzOpAt(baseImg,l['img'],xs,ys,l['opacity'],l['xpos'],l['ypos'])
 			else:
+				# manipulate qpixmap
+				# print("in paintEvent xpos: "+str(l['xpos'])+" ypos: "+str(l['ypos'])+" opacity: "+str(l['opacity']))
 				# we need layer to contain values for position, scale and
 				# opacity. That'll do for starters
 				if l['opacity'] != 100:
@@ -241,6 +432,7 @@ class theatreLabel(QLabel):
 				else:
 					#print("drawing image at ",str(l['xpos'])+","+str(l['ypos'])+" at opacity, presumably 1")
 					pass
+
 				if l['opacity'] != 0:
 					#print(str(type(l['xpos']))+ " "+str(type(l['ypos']))+" "+str(type(l['img'])))
 					if l['xsize'] == 0 :
@@ -258,6 +450,13 @@ class theatreLabel(QLabel):
 							ys = l['ysize']
 							qp.drawPixmap(l['xpos'],l['ypos'],l['img'].scaled(xs,ys,0,0))
 
+		if iimf == 'c':
+			qi = convertCvImage2QtImage(baseImg)
+			#self.setPixmap(qi)
+			qp.drawPixmap(0,0,qi)
+			#QGuiApplication.processEvents()
+
+# the intermediate object that holds currently active performance info
 class soundBoard():
 	# registers all currently-playing notes whether from midi file or
 	# live performance
@@ -310,26 +509,28 @@ class soundBoard():
 			else:
 				self.addNoteOff(msg)
 
-
 	def currentNotes(self):
 		if not self.locked:
 			err("Call to currentNotes without board locked")
 			quit()
 		return self.board.copy()
 
-
+# starts the various concurrent listeners and players
 class player():
 	#pushes midi events out from a file onto the soundboard
-	def __init__(self,file):
+	def __init__(self,file,mainWind):
 		self.myF = file
 		self.stopIt = False
 		self.pauseIt = False
 		self.msgList = []
 		for m in MidiFile(self.myF):
 			self.msgList.append(m)
+		self.mw = mainWind
 
 	def playNext(self,sendNow):
 		global board
+		global bpm
+
 		self.stopIt = False
 		if str(sendNow) != "None":
 			# print("[player] "+str(sendNow))
@@ -347,6 +548,9 @@ class player():
 					board.noteOn(msg)
 				elif msg.type == 'note_off':
 					board.noteOff(msg)
+				elif msg.type == 'set_tempo':
+					newTiming(msg.tempo)
+					self.mw.bpmShow.setText(str(bpm))
 				if len(self.msgList) ==0:
 					msg = None
 					break
@@ -367,7 +571,7 @@ class player():
 	def unPause(self):
 		self.pauseIt = False
 
-
+# the thing that, at frame time constructs the output to theatre from the content of soundboard
 class camera():
 
 	def __init__(self, t):
@@ -490,7 +694,7 @@ class camera():
 		# maybe, if in film mode, ask if you want it stored
 		# but we're not worrying about film mode just now anyway
 
-
+# the data model for the layers table which associates voices with midi channels or live performance data
 class cvmModel(QAbstractTableModel):
 	header_labels = ['Layer', 'Voice', "Listen" ]
 
@@ -533,6 +737,7 @@ class cvmModel(QAbstractTableModel):
 		# the length (only works if all rows are an equal length)
 		return len(self._data[0])
 
+# the data model for the voice note images table
 class TableModel(QAbstractTableModel):
 
 	header_labels = ['N No.', 'N Name', ' ', 'Image File']
@@ -592,6 +797,7 @@ class TableModel(QAbstractTableModel):
 		# the length (only works if all rows are an equal length)
 		return len(self._data[0])
 
+# a voice object with note image table and path definitions for specific attributes
 class voice():
 
 	def __init__(self):
@@ -615,6 +821,7 @@ class voice():
 		ve.exec_()
 		return
 
+# special combo class that is used for selecting path type for a particular voice Attribute
 class PCombo(QComboBox):
 	def __init__(self,path):
 		global PTList
@@ -637,6 +844,8 @@ class PCombo(QComboBox):
 			pe = pathEdit(self.myPath)
 			pe.exec_()
 
+# special combo specifically for selecting the pathtype of xsize. It's special because it may also
+# manipulate the path info for ysize
 class xsizeCombo(QComboBox):
 	def __init__(self,xpath,ypath,ycombo):
 		global PTList
@@ -672,6 +881,7 @@ class xsizeCombo(QComboBox):
 			# at the point of setting the scaling, we don't know the original size of the image we are scaling, so we can't know its AR
 			# maybe when we load images we should calculate and store their aspect ratio. Then at scale time, a Y value could be calculated
 			# to correspond to the required X value
+			# $$$ actually all this depends on the iimf
 			self.xpath.data['maintar'] = True
 			# none of this duplication is important except the change in ptype for appearance sake
 			self.ypath.data = self.xpath.data.copy()
@@ -683,6 +893,7 @@ class xsizeCombo(QComboBox):
 		else:
 			self.xpath.data['maintar'] = False
 
+# special button for editing the details of a path without changing the path type
 class PEButton(QPushButton):
 	def __init__(self,path):
 		super().__init__()
@@ -695,6 +906,7 @@ class PEButton(QPushButton):
 		pe = pathEdit(self.myPath)
 		pe.exec_()
 
+# possibly obsolete slider control
 class vSlide(QSlider):
 	def __init__(self,min,max,linkedLabel,current,parent):
 		super().__init__(Qt.Horizontal,parent)
@@ -711,7 +923,7 @@ class vSlide(QSlider):
 	def getVal(self):
 		return self.value()
 
-
+# path editor, invoked by changes to pcombo, xsizeCombo or clicks on PEButton
 class pathEdit(QDialog):
 	def __init__(self,path):
 		super().__init__()
@@ -933,12 +1145,15 @@ class pathEdit(QDialog):
 
 		self.setLayout(vbox)
 
+# edits the layers list controlling association of voices with incoming live performance data or
+# midi file playback channels
 class CVMapEdit(QDialog):
-	def __init__(self):
+	def __init__(self,mainWind):
 		super().__init__()
 		self.setModal(True)
 		self.initUI()
 		self.newCVMap = []
+		self.mw = mainWind
 
 	def checkNew(self,idx):
 		global voices
@@ -963,19 +1178,21 @@ class CVMapEdit(QDialog):
 
 	def toggleChecked(self,idx):
 		global listenChannel
+		global redLEDOff
+		global redLEDOn
 
 		w = self.cvm.indexWidget(self.model.index(idx, 2))
 		if w.checkState():
-			#mess("state changed, now checked")
-
 			# ensure it has a mapping
 			cbw = self.cvm.indexWidget(self.model.index(idx,1))
 			vname = cbw.currentText()
 			if vname == "<none>":
 				#mess("Can't listen on channel with no voice assigned")
 				w.setChecked(False)
+				self.mw.recLED.setPixmap(redLEDOff)
 			else:
 				# ensure no others are checked
+				self.mw.recLED.setPixmap(redLEDOn)
 				#mess("Unchecking all others")
 				for i in range(0,15):
 					if i != idx:
@@ -985,6 +1202,7 @@ class CVMapEdit(QDialog):
 						listenChannel = self.model._data[i][0]
 		else:
 			#mess("state changed, now unchecked")
+			self.mw.recLED.setPixmap(redLEDOff)
 			listenChannel = None
 
 	def comboAdd(self,idx):
@@ -1061,6 +1279,7 @@ class CVMapEdit(QDialog):
 			CVMap.append([idx,w.currentText() ] )
 		self.accept()
 
+# the voice editor
 class vEditD(QDialog):
 	def __init__(self, v:voice):
 		super().__init__()
@@ -1407,7 +1626,7 @@ class vEditD(QDialog):
 		else:
 			self.btnSave.setEnabled(False)
 
-#class AmenicMain(QDialog) :
+# the main window
 class AmenicMain(QMainWindow):
 	def __init__(self):
 		super().__init__()
@@ -1418,6 +1637,7 @@ class AmenicMain(QMainWindow):
 		self.vtable = []
 		self.loading = False
 		self.lastMess = None
+		self.lastPerfMess = None
 
 	def addPath(self,forUse,pathAttr):
 		p = ipath(forUse,pathAttr['ptype'])
@@ -1427,6 +1647,7 @@ class AmenicMain(QMainWindow):
 	def openProj(self):
 		global audioFile
 		global midiFile
+		global iimf
 
 		self.loading = True
 		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Project File', projPath,"Amenic Project files (*.apr)")
@@ -1445,9 +1666,15 @@ class AmenicMain(QMainWindow):
 			# cache the images and aspect ratio in the imgTable. So imgtable rows are:
 			# note number, image filename, qpixmap, aspect ratio
 			for nm in v.vdata["imgTable"]:
-				image = QPixmap(nm[1])
+				if iimf == 'q':
+					image = QPixmap(nm[1])
+				else:
+					image = cv2.imread(nm[1], cv2.IMREAD_UNCHANGED)
 				nm.append(image) # nm is a ref not a copy right?
-				ar = image.height() / image.width() # multiply target width by ar to get target height
+				if iimf == 'q':
+					ar = image.height() / image.width() # multiply target width by ar to get target height
+				else:
+					ar = image.shape[0] / image.shape[1]
 				nm.append(ar)
 			voices.append(v)
 			v.vdata['xpos'] = self.addPath("xpos",proj['voices'][vname]['xpos'])
@@ -1528,11 +1755,16 @@ class AmenicMain(QMainWindow):
 		( audioFile, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Sound files (*.mp3)")
 		self.setAudio()
 
+
 	def setMidi(self):
 		global midiFile
+		global bpm
+
 		if midiFile != None :
 			self.btnPlay.setEnabled(True)
 			self.mpFileShow.setText(midiFile)
+			midiTiming(midiFile)
+			self.bpmShow.setText(str(bpm))
 		elif audioFile == None:
 			self.btnPlay.setEnabled(False)
 
@@ -1566,6 +1798,15 @@ class AmenicMain(QMainWindow):
 				pass
 		self.livePerfTimer.start(30)
 
+
+	def tickDelta(self):
+		global midiFile
+		global tickDuration
+
+		oldEventTime = self.lastEventTime
+		self.lastEventTime = time.time()
+		return int((time.time() - oldEventTime ) * 1000000/ tickDuration )
+
 	def checkPerfSlot(self):
 		global board
 		global listenChannel
@@ -1577,10 +1818,17 @@ class AmenicMain(QMainWindow):
 		# so stringify it:
 		while str(msg) != "None":
 			msg.channel = listenChannel # most likely it's coming in on chan 0
+			#print(msg)
 			if msg.type == 'note_on':
 				board.noteOn(msg)
 			elif msg.type == "note_off":
 				board.noteOff(msg)
+			if True:
+				self.lastPerfMess.time = self.tickDelta()
+				print("appending ",end = ' ')
+				print(self.lastPerfMess)
+				self.track.append(self.lastPerfMess)
+				self.lastPerfMess = msg
 			msg = self.inport.poll()
 		self.startPerfTimer()
 
@@ -1600,6 +1848,12 @@ class AmenicMain(QMainWindow):
 			self.inport = mido.open_input('Steinberg UR22mkII  Port1')
 			self.livePerfTimer = QTimer()
 			self.livePerfTimer.timeout.connect(self.checkPerfSlot)
+			self.midiFileStartTime = time.time()
+			self.secondaryMidiFile = MidiFile()
+			self.track = MidiTrack()
+			self.secondaryMidiFile.tracks.append(self.track)
+			self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
+			self.lastEventTime = self.midiFileStartTime
 			self.startPerfTimer()
 
 		# I'm rather suspecting that st player will be blocking. We'll see
@@ -1622,14 +1876,14 @@ class AmenicMain(QMainWindow):
 			#start the camera
 			self.cameraSlot()
 
-			self.p = player(midiFile)
+			self.p = player(midiFile,self)
 			# start the midi player
 			self.playslot()
 		else:
 			msgBox("Audio only, no performance info")
 
 	def channelMap(self):
-		cvm = CVMapEdit()
+		cvm = CVMapEdit(self)
 		cvm.exec_()
 		self.edComboInit() # new voices may have been added
 
@@ -1650,7 +1904,11 @@ class AmenicMain(QMainWindow):
 
 	def initUI(self):
 		global emptyImg
+		global blackImg
 		global theatre
+		global iimf
+		global redLEDOn
+		global redLEDOff
 
 		self.setWindowTitle('Amenic')
 		self.resize(1020,600)
@@ -1718,10 +1976,27 @@ class AmenicMain(QMainWindow):
 		mpLabel = QLabel('Performance File',self)
 		self.mpFileShow= QLineEdit(self)
 		self.mpFileShow.readOnly = True
+		bpmLabel = QLabel("BPM")
+		self.bpmShow = QLineEdit(self)
+		self.bpmShow.readOnly = True
+		self.recLED = QLabel()
+		redLEDOff = QPixmap("/Users/johnhollingum/Documents/AMENIC/led-off-th.png").scaled(20,20,2,1)
+		redLEDOn  = QPixmap("/Users/johnhollingum/Documents/AMENIC/red-ledon-th.png").scaled(20,20,2,1)
+		self.recLED.setPixmap(redLEDOff)
 
-		emptyImg = QPixmap("/Users/johnhollingum/Documents/AMENIC/Empty.png").scaled(tWidth,tHeight,2,1)
 		theatre = theatreLabel(self)
-		theatre.setPixmap(emptyImg)
+		emptyPath = "/Users/johnhollingum/Documents/AMENIC/Empty.png"
+		if iimf == 'q':
+			emptyImg = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
+			theatre.setPixmap(emptyImg)
+		else:
+			print ("loading emptyImg")
+			blackPath = "/Users/johnhollingum/Documents/AMENIC/black.png"
+			emptyImg = cv2.resize(cv2.imread(emptyPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
+			blackImg = cv2.resize(cv2.imread(blackPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
+			ei = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
+			theatre.setPixmap(ei)
+			#theatre.setPixmap(convertCvImage2QtImage(emtyImg))
 
 		self.btnPlay = QPushButton('&Play')
 		self.btnPlay.clicked.connect(self.play)
@@ -1751,6 +2026,9 @@ class AmenicMain(QMainWindow):
 		hbox25 = QHBoxLayout()
 		hbox25.addWidget(mpLabel)
 		hbox25.addWidget(self.mpFileShow)
+		hbox25.addWidget(bpmLabel)
+		hbox25.addWidget(self.bpmShow)
+		hbox25.addWidget(self.recLED)
 
 		vbox1.addLayout(hbox25)
 		vbox1.addWidget(theatre)
@@ -1802,39 +2080,11 @@ class AmenicMain(QMainWindow):
 		else:
 			return None
 
-
-
 	def stopsound(self):
 		self.st.stop()
 		self.btnStop.setEnabled(False)
-
-def to_name(nn):
-	nnt = [ "C  ","C#","D  ","D#","E  ","F  ","F#","G  ","G#","A  ", "A#","B  "]
-	on = int(nn / 12) -1 # opinion seems to differ about whether it's necessary to subtract 1
-	nis = nn % 12
-	nname = nnt[nis]
-	return nname + " " + str(on)
-
-def mess(mymess):
-	msg = QMessageBox()
-	msg.setIcon(QMessageBox.Information)
-	msg.setText(mymess)
-	msg.setStandardButtons(QMessageBox.Ok)
-	retval = msg.exec_()
-
-def warn(mymess):
-	msg = QMessageBox()
-	msg.setIcon(QMessageBox.Warning)
-	msg.setText(mymess)
-	msg.setStandardButtons(QMessageBox.Ok)
-	retval = msg.exec_()
-
-def err(mymess):
-	msg = QMessageBox()
-	msg.setIcon(QMessageBox.Critical)
-	msg.setText(mymess)
-	msg.setStandardButtons(QMessageBox.Ok)
-	retval = msg.exec_()
+		self.track.append(self.lastPerfMess)
+		self.secondaryMidiFile.save("/Users/johnhollingum/Documents/AMENIC/secmid.mid")
 
 if __name__ == '__main__':
 	app = QApplication(sys.argv)

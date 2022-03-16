@@ -1,7 +1,7 @@
 {\rtf1\ansi\ansicpg1252\cocoartf2513
-\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
-{\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Menlo-Regular;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\csgray\c0;}
 \paperw11900\paperh16840\margl1440\margr1440\vieww10800\viewh14000\viewkind0
 \pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
@@ -81,6 +81,47 @@ what next? wobble? Acceleration? \
 Record performance?\
 Polyphonic?\
 Smear?\
+\
+I think forget about extra features, concentrate on \
+\
+recording performances and\
+export to, dunno pencil2d format or mp4? whatever is easier I guess\
+\
+OK big technical rabbit hole. To save images to avi, mp4 or whatever, you need the images in opencv format, not qpixmap.\
+\
+as all manipulation was (successfully) being done in qpixmap, thought I\'92d just convert to cv before writing \
+\
+couldn\'92t find any way of converting qpixmap to cv, but going the other way seemed a doddle. Moreover, everyone seemed to be saying \'91why do you want to do that?\'92 as cv is like the premier image manipulation format and qt is just about display. \
+\
+Looked at doing the loading and manipulation in cv format. Not as straightforward in cv, mostly because, being more flexible, it\'92s more low-level. You are exposed much more to the matrices that hold the image data.\
+\
+Just doing a straight opaque overlay required quite a bit of research. But in the testrig, I managed to achieve scaling, positioning and opacity of overlays.\
+\
+Moving the functions from the testrig to the main prog, it didn\'92t work. The error thrown was \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f1\fs22 \cf2 \CocoaLigature0 ValueError: operands could not be broadcast together with shapes (540,174,4) (540,174,3)\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \CocoaLigature1 \
+Which didn\'92t mean a lot to me. So I look into how numpy handles matrices. It talked about the shape of the matrices and \'91dot products\'92 at which point I say \'93I wasn\'92t in when we did matrices miss\'94.\
+\
+So I read about matrices and dot products and how you can\'92t produce a dot product on matrices with incompatible shapes. And now I look at it, those shapes are different.\
+\
+So why are the shapes different. Turns out that the first two dimensions are, fairly unsurprisingly, the width and height. In the case of a greyscale, there are only those two dimensions. For colour images there is a third dimension, usually of size 3 for RG and B bitmaps. If the size of the 3rd dimension is 4, the last one is transparency.\
+\
+jpeg images don\'92t seem to have a transparency layer, but png images do. So if you\'92re reading a mixture of png and jpeg, there\'92s a possibility you\'92ll get incompatible shapes. But it shouldn\'92t be a problem.\
+\
+If use use the switch cv2.IMREAD_GREYSCALE you will only ever get an x*y matrix\
+If you use the switch cv2.IMREAD_COLOR you will only ever get an x*y*3 matrix\
+if you use the switch cv2.IMREAD_UNCHANGED you might get an x*y matrix if it was natively monochrome. You might get an x*y*3 matrix from a jpeg or an x*y*4 from a png\
+\
+Now it seems that the overlay routine can cope with overlaying an x*y*4 png on an x*y*3 background, but it can\'92t cope with overlaying an x*y*3 on an x*y*4 background.\
+\
+\
+\
+\
 \
 \
 }

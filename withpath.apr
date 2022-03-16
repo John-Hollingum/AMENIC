@@ -88,17 +88,21 @@
     [
      -1,
      "/Users/johnhollingum/Documents/crotal/adv1.jpg"
+    ],
+    [
+     -2,
+     "/Users/johnhollingum/Documents/crotal/away1.jpg"
     ]
    ],
    "xpos": {
-    "ptype": "sweep",
-    "timestep": 0.5,
+    "ptype": "fixed",
+    "timestep": 0,
     "imin": null,
     "imax": null,
     "omin": 0,
     "omax": 960,
     "ts2": null,
-    "invert": true,
+    "invert": false,
     "usedfor": "xpos",
     "maintar": true,
     "scaling": 1922.0,
