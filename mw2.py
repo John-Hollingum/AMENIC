@@ -2,27 +2,32 @@
 import os, subprocess
 
 def waveform(in_file, out_file):
-	print(in_file + " " + out_file)
-	command = 'ffmpeg \
- -hide_banner -loglevel panic \
- -i "{in_file}" \
- -filter_complex \
- "[0:a]aformat=channel_layouts=mono, \
- compand=gain=5, \
- showwavespic=s=600x120:colors=#9cf42f[fg]; \
- color=s=600x120:color=#44582c, \
- drawgrid=width=iw/10:height=ih/5:color=#9cf42f@0.1[bg]; \
- [bg][fg]overlay=format=rgb, \
- drawbox=x=(iw-w)/2:y=(ih-h)/2:w=iw:h=1:color=#9cf42f" \
- -vframes 1 \
- -y "{out_file}"'.format(
+	print(in_file + " "+out_file )
+	command = 'ffmpeg'
+	args = '\
+ -hide_banner -loglevel verbose \
+-i "{in_file}" \
+-filter_complex \
+"[0:a]aformat=channel_layouts=mono, \
+compand=gain=5, \
+showwavespic=s=600x120:colors=#9cf42f[fg]; \
+color=s=600x120:color=#44582c, \
+drawgrid=width=iw/10:height=ih/5:color=#9cf42f@0.1[bg]; \
+[bg][fg]overlay=format=rgb, \
+drawbox=x=(iw-w)/2:y=(ih-h)/2:w=iw:h=1:color=#9cf42f" \
+-vframes 1 \
+-y "{out_file}"'.format(
 			in_file = in_file,
 			out_file = out_file
 		)
-	command = '/usr/local/bin/ffmpeg'
-	p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = p.communicate()
+	print(command)
+	print(args)
+	subprocess.run(command + args, shell = True )
+	quit()
 
+	p = subprocess.Popen([command, args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	out, err = p.communicate()
+	print(err)
 	return out
 
 if __name__ == '__main__':

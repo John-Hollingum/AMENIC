@@ -237,20 +237,16 @@
  },
  "cvmap": [
   [
-   0,
-   "<none>"
-  ],
-  [
    1,
-   "<none>"
+   "Back"
   ],
   [
    2,
-   "<none>"
+   "gonk"
   ],
   [
    3,
-   "<none>"
+   "MrBlobby"
   ],
   [
    4,
@@ -290,15 +286,19 @@
   ],
   [
    13,
-   "MrBlobby"
+   "<none>"
   ],
   [
    14,
-   "gonk"
+   "<none>"
   ],
   [
    15,
-   "Back"
+   "<none>"
+  ],
+  [
+   16,
+   "<none>"
   ]
  ],
  "midifile": "/Users/johnhollingum/Documents/AMENIC/test.mid",

@@ -14,7 +14,11 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import QPixmap, QPainter, QPalette, QIcon, QColor, QStandardItemModel, QStandardItem, QGuiApplication
 import sys
 import vlc
+import os, subprocess
+import shutil
 
+wavePixmap = None
+amenicDir = "/Users/johnhollingum/Documents/AMENIC"
 loglevel = 2
 orchPath = "./"
 orchName = "Untitled"
@@ -44,6 +48,28 @@ bpm = None
 iimf = 'q' # internal image manipulation format, q for qpixmap, c for cv
 
 # bunch of general utility functions
+def MakeWaveform(in_file, out_file):
+	# print(in_file + " "+out_file )
+	command = 'ffmpeg'
+	args = '\
+ -hide_banner -loglevel panic \
+-i "{in_file}" \
+-filter_complex \
+"[0:a]aformat=channel_layouts=mono, \
+compand=gain=5, \
+showwavespic=s=600x120:colors=#9cf42f[fg]; \
+color=s=600x120:color=#44582c, \
+drawgrid=width=iw/10:height=ih/5:color=#9cf42f@0.1[bg]; \
+[bg][fg]overlay=format=rgb, \
+drawbox=x=(iw-w)/2:y=(ih-h)/2:w=iw:h=1:color=#9cf42f" \
+-vframes 1 \
+-y "{out_file}" > /dev/null 2>/dev/null'.format(
+			in_file = in_file,
+			out_file = out_file
+		)
+	#print(command)
+	#print(args)
+	subprocess.run(command + args, shell = True )
 
 # Convert an opencv image to QPixmap
 def convertCvImage2QtImage(cv_img):
@@ -586,7 +612,8 @@ class camera():
 		if len(self.imgCache) == 0:
 			for cv in CVMap:
 				if cv[1] != "<none>": # if the mapping isn't blank
-					mapIndex =15 - cv[0] # because it's backwards
+					# mapIndex =15 - cv[0] # because it's backwards
+					mapIndex = cv[0] -1 # because it's not backwards any more but it is shifted down one
 					vname = cv[1]
 					voice = getVoiceByName(vname)
 					if voice == None:
@@ -610,6 +637,7 @@ class camera():
 						self.imgCache[mapIndex][i[0]]= i[2] # cache[ch][note]= image
 
 		image = None
+		#print("imgcache keys",end=' ')
 		#print(self.imgCache.keys())
 		if n in self.imgCache[ch]: # if there's a direct map use it (Includes Rest)
 			# print("setting specific note image")
@@ -626,6 +654,9 @@ class camera():
 		# the rest note (-2) isn't associated with a note, if the path is dependent on
 		# time, note velocity pitch, we're not able to calculate the current path value
 		# so, for now at least:
+		#print("ch is "+str(ch))
+		#print("keys in pathCache ",end = " ")
+		#print(self.pathCache.keys())
 		if n == -2:
 			now = time.time()
 
@@ -681,6 +712,8 @@ class camera():
 		ecount += 1
 		#print("E "+str(ecount))
 		for ch in snap.keys():
+			#print("Trying to render for channel "+str(ch))
+			#print(snap[ch])
 			layers.append(self.render(ch,snap[ch]))
 		self.merge(layers)
 
@@ -696,7 +729,7 @@ class camera():
 
 # the data model for the layers table which associates voices with midi channels or live performance data
 class cvmModel(QAbstractTableModel):
-	header_labels = ['Layer', 'Voice', "Listen" ]
+	header_labels = ['Layer', 'Voice', "Listen", "Timeline" ]
 
 	def __init__(self, data):
 		super().__init__()
@@ -1194,18 +1227,28 @@ class CVMapEdit(QDialog):
 				# ensure no others are checked
 				self.mw.recLED.setPixmap(redLEDOn)
 				#mess("Unchecking all others")
-				for i in range(0,15):
+				for i in range(1,16):
 					if i != idx:
 						w = self.cvm.indexWidget(self.model.index(i, 2))
 						w.setChecked(False)
 					else:
 						listenChannel = self.model._data[i][0]
+						mess("Listening on channel "+str(listenChannel))
 		else:
 			#mess("state changed, now unchecked")
 			self.mw.recLED.setPixmap(redLEDOff)
 			listenChannel = None
 
 	def comboAdd(self,idx):
+		global wavePixmap
+
+		if idx ==0:
+			timeLine = QLabel()
+			if wavePixmap != None:
+				timeLine.setPixmap(wavePixmap.scaled(self.timeLineWidth,self.timeLineHeight,0,1))
+				self.cvm.setIndexWidget(self.model.index(idx,3),timeLine)
+			return
+
 		selVoiceCombo = QComboBox()
 		selVoiceCombo.clear()
 		selVoiceCombo.addItem("<none>")
@@ -1214,8 +1257,10 @@ class CVMapEdit(QDialog):
 		for v in voices:
 			vc += 1
 			selVoiceCombo.addItem(v.vdata["name"])
-		if CVMap[idx][1] != None:
-			i = selVoiceCombo.findText(CVMap[idx][1])
+		# because of the presence of the sound row, the rows in the internal cvmap are
+		# 1 out of sync with the index of the model.
+		if CVMap[idx -1][1] != None:
+			i = selVoiceCombo.findText(CVMap[idx -1][1])
 		else:
 			i = selVoiceCombo.findText("<none>")
 		selVoiceCombo.setCurrentIndex(i)
@@ -1230,26 +1275,35 @@ class CVMapEdit(QDialog):
 
 	def initUI(self):
 		self.setWindowTitle('Edit Channel/Voice mapping')
-		self.resize(350,600)
+		winwidth = 900
+		self.resize(winwidth,625)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
 
 		self.cvm = QTableView()
 		CVPresTable = []
 
-		for row in range(15,-1,-1):
-			CVPresTable.append([ row, None, ""])
+		for row in range(0,17):
+			if row == 0:
+				CVPresTable.append(['Sound',"","",""])
+			else:
+				CVPresTable.append([ row -1, None, "",""])
 		self.model = cvmModel(CVPresTable)
 
 		self.cvm.setModel(self.model)
 
-		for idx in range(0, 16):
-			self.comboAdd(idx)
+
 
 		self.cvm.verticalHeader().hide()
-
+		tableWidth = winwidth - 42 # maybe
 		self.cvm.setColumnWidth(0,55)
 		self.cvm.setColumnWidth(1,180)
 		self.cvm.setColumnWidth(2,50)
+		self.timeLineWidth = tableWidth - ( 55 + 180 + 50)
+		self.cvm.setColumnWidth(3,self.timeLineWidth)
+		self.timeLineHeight = 28
+
+		for idx in range(0, 17):
+			self.comboAdd(idx)
 
 		self.btnCancel = QPushButton('Cancel')
 		self.btnCancel.clicked.connect(self.cancelOut)
@@ -1274,7 +1328,7 @@ class CVMapEdit(QDialog):
 	def saveOut(self):
 		global CVMap
 		CVMap.clear()
-		for idx in range(0, 16):
+		for idx in range(1, 17):
 			w = self.cvm.indexWidget(self.model.index(idx, 1))
 			CVMap.append([idx,w.currentText() ] )
 		self.accept()
@@ -1648,6 +1702,7 @@ class AmenicMain(QMainWindow):
 		global audioFile
 		global midiFile
 		global iimf
+		global wavePixmap
 
 		self.loading = True
 		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Project File', projPath,"Amenic Project files (*.apr)")
@@ -1690,6 +1745,8 @@ class AmenicMain(QMainWindow):
 		self.setMidi()
 
 		audioFile = proj["audiofile"]
+		MakeWaveform(audioFile,amenicDir +"/tempWave.jpg")
+		wavePixmap = QPixmap(amenicDir + "/tempWave.jpg")
 		self.setAudio()
 
 		self.edComboInit()
@@ -1980,18 +2037,18 @@ class AmenicMain(QMainWindow):
 		self.bpmShow = QLineEdit(self)
 		self.bpmShow.readOnly = True
 		self.recLED = QLabel()
-		redLEDOff = QPixmap("/Users/johnhollingum/Documents/AMENIC/led-off-th.png").scaled(20,20,2,1)
-		redLEDOn  = QPixmap("/Users/johnhollingum/Documents/AMENIC/red-ledon-th.png").scaled(20,20,2,1)
+		redLEDOff = QPixmap(amenicDir+"/led-off-th.png").scaled(20,20,2,1)
+		redLEDOn  = QPixmap(amenicDir+"/red-ledon-th.png").scaled(20,20,2,1)
 		self.recLED.setPixmap(redLEDOff)
 
 		theatre = theatreLabel(self)
-		emptyPath = "/Users/johnhollingum/Documents/AMENIC/Empty.png"
+		emptyPath = amenicDir+"/Empty.png"
 		if iimf == 'q':
 			emptyImg = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
 			theatre.setPixmap(emptyImg)
 		else:
 			print ("loading emptyImg")
-			blackPath = "/Users/johnhollingum/Documents/AMENIC/black.png"
+			blackPath = amenicDir + "/black.png"
 			emptyImg = cv2.resize(cv2.imread(emptyPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
 			blackImg = cv2.resize(cv2.imread(blackPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
 			ei = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
@@ -2084,7 +2141,7 @@ class AmenicMain(QMainWindow):
 		self.st.stop()
 		self.btnStop.setEnabled(False)
 		self.track.append(self.lastPerfMess)
-		self.secondaryMidiFile.save("/Users/johnhollingum/Documents/AMENIC/secmid.mid")
+		self.secondaryMidiFile.save(amenicDir + "/secmid.mid")
 
 if __name__ == '__main__':
 	app = QApplication(sys.argv)

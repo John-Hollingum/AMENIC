@@ -119,6 +119,23 @@ if you use the switch cv2.IMREAD_UNCHANGED you might get an x*y matrix if it was
 \
 Now it seems that the overlay routine can cope with overlaying an x*y*4 png on an x*y*3 background, but it can\'92t cope with overlaying an x*y*3 on an x*y*4 background.\
 \
+Expanding the layers window and some primitive transport control\
+\
+Add a 17th row with no voice select and showing the audio waveform in \
+\
+The new column which shows kinda what performance activity there is or what audio there is. At the basic level, you can see what tracks are clean and which ones have performance activity. \
+\
+Ultimately you\'92d want good synchronisation between the waveform and performance graphics and the ability to place the transport at a particular point and represent the current image state at that point. \
+\
+frame, beat or second graticule. Ugh! do we respond in clever ways to tempo change or just outlaw them?\
+\
+More sophisticated midi saving which would involve storing the current state at the end of a performance, but only overwriting the original with the temp file at \'92user save\'92 time.\
+\
+Update the temp performance file if a track is cleaned out\
+\
+initially only allow record on clean tracks \
+\
+\
 \
 \
 \
