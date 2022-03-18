@@ -135,6 +135,21 @@ Update the temp performance file if a track is cleaned out\
 \
 initially only allow record on clean tracks \
 \
+how to make the midi/performance timelines\
+Is the solution to this similar to the jump-to-frame/time problem?\
+Brute force solution to jtf would be to keep a massive array containing one soundboard for every frame for the entire duration\
+Maybe there could be more sparse \'91milestone\'92 soundboards created at fixed frame numbers (? one every 50?) and position finely by rolling forward, adding or subtracting from the milestone.\
+\
+In any case we need to be able to roll the player in \'91asap\'92 time rather than real time, making soundboards, but not rendering them\
+\
+To draw lines on the timelines, it would only be necessary to have an array of starts and\'85 let\'92s face it, it\'92s just a soundboard. Its generation would be similar, but the action on a note_off/note_on, velocity 0 would be more complex.\
+\
+Lines could be positioned according to note value and coloured according to velocity.\
+\
+Both jtf and timeline rendering would involve running the player in asap time with a different output from normal.\
+\
+\
+\
 \
 \
 \

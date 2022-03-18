@@ -16,6 +16,7 @@ import sys
 import vlc
 import os, subprocess
 import shutil
+from mutagen.mp3 import MP3
 
 wavePixmap = None
 amenicDir = "/Users/johnhollingum/Documents/AMENIC"
@@ -486,13 +487,22 @@ class theatreLabel(QLabel):
 class soundBoard():
 	# registers all currently-playing notes whether from midi file or
 	# live performance
-	def __init__(self):
+	def __init__(self, mode):
 		self.board = dict()
 		self.evLockQueue = []
 		self.locked = False
+		self.mode = mode
+		if not self.mode in ['realtime','asap']:
+			err("soundboard object created with bad mode ["+self.mode+"]")
+			quit()
 
-	def addNoteOn(self,msg):
-		t = time.time()
+	def addNoteOn(self,msg, absTime = None):
+		if absTime == None:
+			# we're running in realtime mode
+			t = time.time()
+		else:
+			# we're running in asap mode
+			t = absTime
 		if msg.channel not in self.board.keys():
 			self.board[msg.channel] = {}
 		#print("[Board] chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(t) + " velocity "+ str(msg.velocity))
@@ -508,26 +518,45 @@ class soundBoard():
 		self.board[msg.channel].pop(msg.note)
 
 
-	def noteOn(self,msg):
+	def noteOn(self,msg, absTime = None):
 		if self.locked:
+			# it's never going to be locked in asap mode
 			self.evLockQueue.append(msg)
 		else:
-			self.addNoteOn(msg)
+			if absTime == None:
+				if self.mode == 'asap':
+					err("asap mode soundboard::noteOn called with no absTime")
+					quit()
+				self.addNoteOn(msg)
+			else:
+				if self.mode == 'realtime':
+					err("realtime mode soundboard::noteOn called specifying absTime")
+					quit()
+				self.addNoteOn(msg,absTime)
 
 	def noteOff(self,msg):
-		if self.locked:
-			self.evLockQueue.append(msg)
-		else:
-			self.addNoteOff(msg)
+		addnow = True
+		if self.mode == 'realtime':
+			if self.locked:
+				self.evLockQueue.append(msg)
+				addnow = False
+		if addnow:
+			if absTime == None:
+				self.addNoteOff(msg)
+			else:
+				self.addNoteOff(msg,absTime)
 
 	def stopAll(self):
 		self.board = []
 
 	def lockBoard(self):
+		if self.mode == 'asap':
+			err("Can't call soundboard::lockBoard on asap mode soundBoard")
+			quit()
 		self.locked = True
 
 	def unLockBoard(self):
-
+		# locking is not used in asap mode
 		while len(self.evLockQueue) >0:
 			msg = self.evLockQueue.pop(0)
 			if msg.type == 'note_on':
@@ -536,9 +565,10 @@ class soundBoard():
 				self.addNoteOff(msg)
 
 	def currentNotes(self):
-		if not self.locked:
-			err("Call to currentNotes without board locked")
-			quit()
+		if self.mode == 'realtime':
+			if not self.locked:
+				err("Call to currentNotes without 'realtime' mode soundBoard locked")
+				quit()
 		return self.board.copy()
 
 # starts the various concurrent listeners and players
@@ -1299,6 +1329,7 @@ class CVMapEdit(QDialog):
 		self.cvm.setColumnWidth(1,180)
 		self.cvm.setColumnWidth(2,50)
 		self.timeLineWidth = tableWidth - ( 55 + 180 + 50)
+		mess(str(self.timeLineWidth))
 		self.cvm.setColumnWidth(3,self.timeLineWidth)
 		self.timeLineHeight = 28
 
@@ -1797,11 +1828,17 @@ class AmenicMain(QMainWindow):
 
 	def setAudio(self):
 		global audioFile
+		global audioDuration
 
 		if audioFile != None:
 			self.ssFileShow.setText(audioFile)
 			self.btnPlay.setEnabled(True)
 			# may as well initialise the audio player here
+			audio = MP3(audioFile)
+			audioDuration = audio.info.length
+			durationInFrames = int(audioDuration * fRate)
+			self.adShow.setText(f'{audioDuration:.2f}')
+			self.difShow.setText(str(durationInFrames))
 			self.st = vlc.MediaPlayer("File://"+audioFile)
 		elif midiFile == None:
 				self.btnPlay.setEnabled(False)
@@ -1889,6 +1926,9 @@ class AmenicMain(QMainWindow):
 			msg = self.inport.poll()
 		self.startPerfTimer()
 
+	# this is the routine that kicks off all the facets of 'playing'. I launches the reference audio track
+	# it starts the midi/performance play to soundboard, it starts the performance listener, sending
+	# output to soundboard, and it starts the camera that renders the soundboard and displays to screen.
 	def play(self):
 		global CVMap
 		global theatre
@@ -1926,7 +1966,7 @@ class AmenicMain(QMainWindow):
 				return
 
 			# create camera
-			board = soundBoard()
+			board = soundBoard('realtime')
 			self.gateTimerPeriod = int(1000 / fRate)
 
 			self.c = camera(theatre)
@@ -2029,6 +2069,14 @@ class AmenicMain(QMainWindow):
 		ssLabel = QLabel('Sound Source',self)
 		self.ssFileShow= QLineEdit(self)
 		self.ssFileShow.readOnly = True
+		adLabel = QLabel('Audio Duration seconds')
+		self.adShow = QLineEdit(self)
+		self.adShow.setMaximumWidth(80)
+		self.adShow.readOnly = True
+		difLabel = QLabel(' Frames ')
+		self.difShow = QLineEdit(self)
+		self.difShow.setMaximumWidth(80)
+		self.difShow.readOnly = True
 
 		mpLabel = QLabel('Performance File',self)
 		self.mpFileShow= QLineEdit(self)
@@ -2077,6 +2125,10 @@ class AmenicMain(QMainWindow):
 		hbox2 = QHBoxLayout()
 		hbox2.addWidget(ssLabel)
 		hbox2.addWidget(self.ssFileShow)
+		hbox2.addWidget(adLabel)
+		hbox2.addWidget(self.adShow)
+		hbox2.addWidget(difLabel)
+		hbox2.addWidget(self.difShow)
 
 		vbox1.addLayout(hbox2)
 

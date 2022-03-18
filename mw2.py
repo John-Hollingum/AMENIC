@@ -23,12 +23,7 @@ drawbox=x=(iw-w)/2:y=(ih-h)/2:w=iw:h=1:color=#9cf42f" \
 	print(command)
 	print(args)
 	subprocess.run(command + args, shell = True )
-	quit()
 
-	p = subprocess.Popen([command, args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	out, err = p.communicate()
-	print(err)
-	return out
 
 if __name__ == '__main__':
 	basepath = './media'
