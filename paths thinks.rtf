@@ -153,13 +153,24 @@ Both jtf and timeline rendering would involve running the player in asap time wi
 need to make transportStop stop everything. Currently it only stops the music playback and does some jiggery pokery with saving the midi data.\
 \
 need to add stop the player (the thing that pushes midi file data to the board)\
+ call player::stop()  (self.p.stop()) \
 the listener (that pushes live perf data to the board)\
+  set the self.stop flag\
 The camera (the thing that sends the rendering of the board to the theatre.\
+  set the self.stop flag\
 \
 Get the export to mp4 progress window to work - ! most of the way there. What a pain.\
 \
+We need to have the performance as a memory thing, and not just something referred to by the original filename. At present, we have routines that get tempo info and, more importantly make timeline images that work from the original file rather than a memory image.\
+\
+Need to get to a state where we only call MidiFile at project load/ midi import time and at all other times work on a memory image.\
+\
+\
 Need to get \'91recorded\'92 performance showing on the layer table\
 Need to be able to save recorded data with the existing data\
+\
+In order to hit the next target, we need to store track index info along with the other layer info\
+\
 need to be able to delete a channel of recorded data\
 \
 Need to look at the qualiity of syncronisation \

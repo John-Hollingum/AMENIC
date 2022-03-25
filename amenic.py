@@ -36,7 +36,7 @@ tWidth = 960
 tHeight = 540
 mainWindowX = 1020
 mainWindowY = 600
-layerWindowX = 900
+layerWindowX = 970
 #fRate = 24
 fRate = 12
 ecount=0
@@ -44,7 +44,7 @@ emptyImg = None
 blackImg = None
 blackImgQ = None
 board = None
-midiFile = None
+performance = None
 audioFile = None
 listenChannel = None
 PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble"]
@@ -106,6 +106,7 @@ def timeLineGeometry():
 	global chanNumberX
 	global voiceNameX
 	global listenCheckX
+	global clearBtnX
 	global timeLineWidth
 	global timeLineHeight
 
@@ -113,7 +114,8 @@ def timeLineGeometry():
 	chanNumberX = 55
 	voiceNameX = 180
 	listenCheckX = 50
-	timeLineWidth = tableWidth - ( chanNumberX + voiceNameX + listenCheckX)
+	clearBtnX =70
+	timeLineWidth = tableWidth - ( chanNumberX + voiceNameX + clearBtnX + listenCheckX)
 	timeLineHeight = 28
 
 def overlay_transparent(background, overlay, x, y):
@@ -174,6 +176,9 @@ def overlay_transparent(background, overlay, x, y):
 
 def overlaySzOpAt(background,overlay,xsize,ysize,opacity,xpos,ypos):
 	# print("xsize"+str(xsize)+" ysize "+str(ysize)+" opacity "+str(opacity)+" xpos "+str(xpos)+ " ypos "+str(ypos))
+	if str(type(overlay)) == "<class 'NoneType'>":
+		print("nonetype overlay")
+		return background
 	if ysize == -1: # retain AR
 		ar =  overlay.shape[0] / overlay.shape[1]
 		ysize = int(xsize * ar)
@@ -245,13 +250,12 @@ def newTiming(t):
 	beatDuration = t
 	tickDuration = t/ticksPerBeat
 
-def midiTiming(mfile):
+def midiTiming(mf):
 	global beatDuration
 	global tickDuration
 	global ticksPerBeat
 	global bpm
 
-	mf = MidiFile(mfile)
 	# info from header
 	ticksPerBeat = mf.ticks_per_beat
 	# find the first set_tempo message
@@ -280,10 +284,9 @@ def drawline(snap,msg,aTime):
 	# them in a specialist table which is incorporated into data model in cvedit
 	# in a similar way to the wavePixmap
 	if len(chanPixmaps) == 0:
-		blackPixmap = blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1)
 		for i in range(0,16):
 			# add a black image and a 'clean' flag
-			chanPixmaps.append([ blackPixmap,True])
+			chanPixmaps.append([ blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy(),True])
 	chan = msg.channel
 	for ch in snap.keys():
 		if ch == chan:
@@ -299,7 +302,7 @@ def drawline(snap,msg,aTime):
 					p.drawLine(x1, y1, x2, y2)
 					p.end()
 
-def makeChannelTimelines(mfile):
+def makeChannelTimelines(mf):
 	global timeLineWidth
 	global timeLineHeight
 	global audioDuration
@@ -309,7 +312,7 @@ def makeChannelTimelines(mfile):
 	# timeline image
 	tlXScale = timeLineWidth / audioDuration
 	tlYscale = timeLineHeight / 88 # but subtract 21 before applying
-	mf = MidiFile(mfile)
+
 	startBoard = soundBoard('asap')
 	aTime = 0
 	frameTime = 0
@@ -324,7 +327,7 @@ def makeChannelTimelines(mfile):
 			startBoard.noteOn(msg,aTime)
 		elif msg.type == 'note_off':
 			drawline(snap,msg,aTime)
-			startBoard.noteOff(msg,aTime)
+			startBoard.noteOff(msg)
 
 class vidExport(QDialog):
 	def __init__(self,ofile):
@@ -365,13 +368,13 @@ class vidExport(QDialog):
 
 	def expSlot(self):
 		global fRate
-		global midiFile
+		global performanceFile
 		global audioDuration
 
 		# render and output to file in asap time
 		if not self.expInit:
 			print("here1")
-			self.mf = MidiFile(midiFile)
+			self.mf = MidiFile(performanceFile)
 			self.startBoard = soundBoard('asap')
 			self.cam = camera(self.ofile,None)
 			self.frameDuration = 1 / fRate
@@ -742,10 +745,7 @@ class soundBoard():
 				self.evLockQueue.append(msg)
 				addnow = False
 		if addnow:
-			if absTime == None:
-				self.addNoteOff(msg)
-			else:
-				self.addNoteOff(msg,absTime)
+			self.addNoteOff(msg)
 
 	def stopAll(self):
 		self.board = []
@@ -772,15 +772,17 @@ class soundBoard():
 				quit()
 		return self.board.copy()
 
-# starts the various concurrent listeners and players
+# The function 'play' inside amenicMain starts the various concurrent listeners and players
+# here we've got various classes to support that playing, starting  with the thing that
+# takes midi events from the midifile and sends them to the board.
+
 class player():
 	#pushes midi events out from a file onto the soundboard
-	def __init__(self,file,mainWind):
-		self.myF = file
+	def __init__(self,p,mainWind):
 		self.stopIt = False
 		self.pauseIt = False
 		self.msgList = []
-		for m in MidiFile(self.myF):
+		for m in p:
 			self.msgList.append(m)
 		self.mw = mainWind
 
@@ -974,14 +976,9 @@ class camera():
 			layers.append(self.render(ch,snap[ch]))
 		self.merge(layers)
 
-	def cut(self):
-		self.gate.stop()
-		# maybe, if in film mode, ask if you want it stored
-		# but we're not worrying about film mode just now anyway
-
 # the data model for the layers table which associates voices with midi channels or live performance data
 class cvmModel(QAbstractTableModel):
-	header_labels = ['Layer', 'Voice', "Listen", "Timeline" ]
+	header_labels = ['Layer', 'Voice', "Listen", "Clear", "Timeline" ]
 
 	def __init__(self, data):
 		super().__init__()
@@ -1491,6 +1488,12 @@ class CVMapEdit(QDialog):
 			self.mw.recLED.setPixmap(redLEDOff)
 			listenChannel = None
 
+	def clearChan(self,idx):
+		global performance
+
+		# mess("here we'd put in code to clear channel "+str(idx-1))
+		print(performance.tracks)
+
 	def comboAdd(self,idx):
 		global wavePixmap
 		global cleanPixmap
@@ -1533,22 +1536,29 @@ class CVMapEdit(QDialog):
 			listening.stateChanged.connect(partial(self.toggleChecked,idx))
 			listening.setEnabled(canListen)
 
+
+			clearBtn = QPushButton()
+			clearBtn.setText("Clear")
+			clearBtn.clicked.connect(partial(self.clearChan,idx))
+			clearBtn.setEnabled(not canListen)
+			self.cvm.setIndexWidget(self.model.index(idx,3),clearBtn)
+
 		timeLine = QLabel()
 		if idx ==0:
 			if wavePixmap != None:
 				timeLine.setPixmap(wavePixmap.scaled(timeLineWidth,timeLineHeight,0,1))
-				self.cvm.setIndexWidget(self.model.index(idx,3),timeLine)
+				self.cvm.setIndexWidget(self.model.index(idx,4),timeLine)
 			return
 		if len(chanPixmaps) == 0:
 			return
 		if chanPixmaps[idx -1][1]:
 			# it's a clean channel
 			timeLine.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
-			self.cvm.setIndexWidget(self.model.index(idx,3),timeLine)
+			self.cvm.setIndexWidget(self.model.index(idx,4),timeLine)
 		else:
 			# there is an activity pixmap
 			timeLine.setPixmap(chanPixmaps[idx -1][0].scaled(timeLineWidth,timeLineHeight,0,1))
-			self.cvm.setIndexWidget(self.model.index(idx,3),timeLine)
+			self.cvm.setIndexWidget(self.model.index(idx,4),timeLine)
 
 	def initUI(self):
 		global timeLineWidth
@@ -1558,6 +1568,7 @@ class CVMapEdit(QDialog):
 		global chanNumberX
 		global voiceNameX
 		global listenCheckX
+		global clearBtnX
 		global timeLineWidth
 		global timeLineHeight
 
@@ -1570,9 +1581,9 @@ class CVMapEdit(QDialog):
 
 		for row in range(0,17):
 			if row == 0:
-				CVPresTable.append(['Sound',"","",""])
+				CVPresTable.append(['Sound',"","","",""])
 			else:
-				CVPresTable.append([ row -1, None, "",""])
+				CVPresTable.append([ row -1, None, "","",""])
 		self.model = cvmModel(CVPresTable)
 
 		self.cvm.setModel(self.model)
@@ -1583,8 +1594,8 @@ class CVMapEdit(QDialog):
 		self.cvm.setColumnWidth(0,chanNumberX)
 		self.cvm.setColumnWidth(1,voiceNameX)
 		self.cvm.setColumnWidth(2,listenCheckX)
-		self.cvm.setColumnWidth(3,timeLineWidth)
-
+		self.cvm.setColumnWidth(3,clearBtnX)
+		self.cvm.setColumnWidth(4,timeLineWidth)
 
 		for idx in range(0, 17):
 			self.comboAdd(idx)
@@ -1984,7 +1995,7 @@ class AmenicMain(QMainWindow):
 
 	def openProj(self):
 		global audioFile
-		global midiFile
+		global performanceFile
 		global iimf
 		global wavePixmap
 
@@ -2032,8 +2043,7 @@ class AmenicMain(QMainWindow):
 		wavePixmap = QPixmap(amenicDir + "/tempWave.jpg")
 		self.setAudio()
 		# has to be audio then midi as MakeWaveform calculates the timeLineWidth
-		midiFile = proj["midifile"]
-		self.setMidi()
+		self.setMidi(proj["midifile"])
 
 		self.edComboInit()
 		self.loading = False
@@ -2072,7 +2082,7 @@ class AmenicMain(QMainWindow):
 		for map in CVMap:
 			proj["cvmap"].append(map)
 
-		proj["midifile"] = midiFile
+		proj["midifile"] = performanceFile
 		proj["audiofile"] = audioFile
 
 		saveData = json.dumps(proj, indent = 1)
@@ -2104,7 +2114,7 @@ class AmenicMain(QMainWindow):
 			self.adShow.setText(f'{audioDuration:.2f}')
 			self.difShow.setText(str(durationInFrames))
 			self.st = vlc.MediaPlayer("File://"+audioFile)
-		elif midiFile == None:
+		elif performance == None:
 			self.btnPlay.setEnabled(False)
 
 	def importAudio(self):
@@ -2114,26 +2124,29 @@ class AmenicMain(QMainWindow):
 		if audioFile != '':
 			self.setAudio()
 
-	def setMidi(self):
-		global midiFile
+	def setMidi(self, performanceFile):
+		global performance
 		global bpm
 
-		if midiFile != None :
+		if performanceFile != '':
+			performance = MidiFile(performanceFile)
 			self.btnPlay.setEnabled(True)
-			self.mpFileShow.setText(midiFile)
-			midiTiming(midiFile)
+			self.mpFileShow.setText(performanceFile)
+			midiTiming(performance) # this actually extracts info from the file
 			self.bpmShow.setText(str(bpm))
-			makeChannelTimelines(midiFile)
+			makeChannelTimelines(performance)
 		elif audioFile == None:
 			self.btnPlay.setEnabled(False)
 
 	def importMidi(self):
-		global midiFile
-		(midiFile, filter) = QFileDialog.getOpenFileName(self,'Open Performance File','./',"Midi files (*.mid *.MID)")
-		self.setMidi()
+		global performanceFile
+
+		# !!! need to resolve how this sets the project midi file
+		(performanceFile, filter) = QFileDialog.getOpenFileName(self,'Open Performance File','./',"Midi files (*.mid *.MID)")
+		self.setMidi(performanceFile)
 
 	def playslot(self):
-		# this pushes out the events in the midiFile in (roughly) the right timing
+		# this pushes out the events in the performance in (roughly) the right timing
 		# and maintains the soundBoard with all currently playing notes
 		if self.stopFlag:
 			return
@@ -2164,7 +2177,7 @@ class AmenicMain(QMainWindow):
 
 
 	def tickDelta(self):
-		global midiFile
+		global performance
 		global tickDuration
 
 		oldEventTime = self.lastEventTime
@@ -2183,6 +2196,9 @@ class AmenicMain(QMainWindow):
 		# None, even though poll() is documented as either returning a message or a None
 		# so stringify it:
 		while str(msg) != "None":
+			if msg.type == "sysex":
+				msg = self.inport.poll()
+				continue
 			msg.channel = listenChannel # most likely it's coming in on chan 0
 			#print(msg)
 			if msg.type == 'note_on':
@@ -2204,11 +2220,11 @@ class AmenicMain(QMainWindow):
 		global theatre
 		global board
 		global fRate
-		global midiFile
+		global performance
 
 		self.stopFlag = False
 		# this shouldn't happen, but:
-		if midiFile == None and audioFile == None:
+		if performance == None and audioFile == None:
 			err("Nothing to play")
 			return
 
@@ -2216,12 +2232,11 @@ class AmenicMain(QMainWindow):
 			self.inport = mido.open_input('Steinberg UR22mkII  Port1')
 			self.livePerfTimer = QTimer()
 			self.livePerfTimer.timeout.connect(self.checkPerfSlot)
-			self.midiFileStartTime = time.time()
-			self.secondaryMidiFile = MidiFile()
+			self.performanceStartTime = time.time()
 			self.track = MidiTrack()
-			self.secondaryMidiFile.tracks.append(self.track)
+			performance.tracks.append(self.track)
 			self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
-			self.lastEventTime = self.midiFileStartTime
+			self.lastEventTime = self.performanceStartTime
 			self.startPerfTimer()
 
 		# I'm rather suspecting that st player will be blocking. We'll see
@@ -2229,7 +2244,7 @@ class AmenicMain(QMainWindow):
 			self.st.play()
 			self.btnStop.setEnabled(True)
 
-		if midiFile != None:
+		if performance != None:
 
 			if len(CVMap)==0:
 				err("No voices assigned to layers. Can't render performance info")
@@ -2243,7 +2258,7 @@ class AmenicMain(QMainWindow):
 			#start the camera
 			self.cameraSlot()
 
-			self.p = player(midiFile,self)
+			self.p = player(performance,self)
 			# start the midi player
 			self.playslot()
 		else:
@@ -2475,12 +2490,16 @@ class AmenicMain(QMainWindow):
 			return None
 
 	def transportStop(self):
-		self.stopFlag = True
-		self.st.stop()
+		global performance
+
+		self.stopFlag = True # stops midi listener and camera
+		self.p.stop() # stops midfile player
+		self.st.stop() # stops audio playback
 		self.btnStop.setEnabled(False)
 		if listenChannel != None:
 			self.track.append(self.lastPerfMess)
-			self.secondaryMidiFile.save(amenicDir + "/secmid.mid")
+			performance.save(amenicDir + "/secmid.mid")
+			makeChannelTimelines(performance)
 
 if __name__ == '__main__':
 	app = QApplication(sys.argv)
