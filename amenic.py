@@ -17,6 +17,7 @@ import vlc
 import os, subprocess
 import shutil
 from mutagen.mp3 import MP3
+import re
 
 wavePixmap = None
 chanPixmaps = []
@@ -29,6 +30,7 @@ vExtn = 'vcf'
 projPath = "./"
 projName = "Untitled"
 pExtn = 'apr'
+cleanProj = True
 voices = []
 presTable = []
 CVMap = []
@@ -45,7 +47,7 @@ blackImg = None
 blackImgQ = None
 board = None
 performance = None
-audioFile = None
+audioFile = ''
 listenChannel = None
 PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble"]
 FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
@@ -129,9 +131,10 @@ def overlay_transparent(background, overlay, x, y):
 	# return the background image
 	if x >= background_width or y >= background_height:
 		return background
-
 	# how big is the overlay?
 	h, w = overlay.shape[0], overlay.shape[1]
+	if h == 0 or w == 0:
+		return background
 
 	# will the overlay go beyond the bounds of the background?
 	if x + w > background_width:
@@ -175,14 +178,14 @@ def overlay_transparent(background, overlay, x, y):
 	return background
 
 def overlaySzOpAt(background,overlay,xsize,ysize,opacity,xpos,ypos):
-	# print("xsize"+str(xsize)+" ysize "+str(ysize)+" opacity "+str(opacity)+" xpos "+str(xpos)+ " ypos "+str(ypos))
+	#print("xsize"+str(xsize)+" ysize "+str(ysize)+" opacity "+str(opacity)+" xpos "+str(xpos)+ " ypos "+str(ypos))
 	if str(type(overlay)) == "<class 'NoneType'>":
-		print("nonetype overlay")
+		#print("nonetype overlay")
 		return background
 	if ysize == -1: # retain AR
 		ar =  overlay.shape[0] / overlay.shape[1]
 		ysize = int(xsize * ar)
-
+		#print("Adjusted xsize"+str(xsize)+" ysize "+str(ysize)+" AR "+str(ar)+" opacity "+str(opacity)+" xpos "+str(xpos)+ " ypos "+str(ypos))
 	opacity = opacity / 100
 
 	if opacity == 1:
@@ -191,8 +194,11 @@ def overlaySzOpAt(background,overlay,xsize,ysize,opacity,xpos,ypos):
 		bg = background.copy()
 
 	if xsize != 0: # use scaled size
-		#print("scaled")
-		comb1 = overlay_transparent(bg,cv2.resize(overlay,(xsize,ysize)),xpos,ypos)
+		# print("scaled")
+		if xsize == 0 or ysize == 0:
+			return background.copy()
+		else:
+			comb1 = overlay_transparent(bg,cv2.resize(overlay,(xsize,ysize)),xpos,ypos)
 	else: # use native size
 		#print("native size")
 		comb1 = overlay_transparent(bg,overlay,xpos,ypos)
@@ -232,6 +238,7 @@ def err(mymess):
 	msg.setText(mymess)
 	msg.setStandardButtons(QMessageBox.Ok)
 	retval = msg.exec_()
+
 def getVoiceByName(vName):
 	# mess(" there are "+str(len(voices))+" voices stored")
 	# print("in getvoicebyname, seeking "+vName)
@@ -239,6 +246,16 @@ def getVoiceByName(vName):
 		if v.vdata['name'] == vName:
 			return v
 	return None
+
+def populateVoices(vcb,withAdd):
+	vcb.clear()
+	vcb.addItem("<none>")
+	if withAdd:
+		vcb.addItem("+Add New")
+	vc =0
+	for v in voices:
+		vc += 1
+		vcb.addItem(v.vdata["name"])
 
 def newTiming(t):
 	global ticksPerBeat
@@ -329,6 +346,103 @@ def makeChannelTimelines(mf):
 			drawline(snap,msg,aTime)
 			startBoard.noteOff(msg)
 
+class voiceExport(QDialog):
+	def __init__(self):
+		super().__init__()
+		self.setModal(True)
+		self.initUI()
+		self.selVoice = None
+
+	def checkOK(self):
+		if self.voiceCombo.currentText() != '<none>':
+			self.expOK.setEnabled(True)
+		else:
+			self.expOK.setEnabled(False)
+
+	def okExp(self):
+		self.selVoice = self.voiceCombo.currentText()
+		self.accept()
+
+	def cancelExp(self):
+		self.selVoice = None
+		self.reject()
+
+	def initUI(self):
+
+		self.setWindowTitle('voice export')
+		self.resize(300,80)
+		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+		self.voiceCombo = QComboBox()
+		populateVoices(self.voiceCombo,False)
+		self.voiceCombo.currentTextChanged.connect(self.checkOK)
+
+		expCancel = QPushButton()
+		expCancel.setText('Cancel')
+		expCancel.clicked.connect(self.cancelExp)
+
+		self.expOK = QPushButton()
+		self.expOK.setText('OK')
+		self.expOK.clicked.connect(self.okExp)
+		self.expOK.setEnabled(False)
+
+		vb = QVBoxLayout()
+		vb.addWidget(self.voiceCombo)
+		hb = QHBoxLayout()
+		hb.addWidget(expCancel)
+		hb.addWidget(self.expOK)
+		vb.addLayout(hb)
+		self.setLayout(vb)
+
+def addPath(forUse,pathAttr):
+	p = ipath(forUse,pathAttr['ptype'])
+	p.setFromLoad(pathAttr)
+	return p
+
+def internaliseVoice(projVoice,vname):
+	v = voice()
+	v.vdata['name'] = vname
+	v.vdata['imgTable'] = projVoice['imgTable']
+	# cache the images and aspect ratio in the imgTable. So imgtable rows are:
+	# note number, image filename, qpixmap, aspect ratio
+	for nm in v.vdata["imgTable"]:
+		if iimf == 'q':
+			image = QPixmap(nm[1])
+		else:
+			image = cv2.imread(nm[1], cv2.IMREAD_UNCHANGED)
+		nm.append(image) # nm is a ref not a copy right?
+		if iimf == 'q':
+			ar = image.height() / image.width() # multiply target width by ar to get target height
+		else:
+			ar = image.shape[0] / image.shape[1]
+		nm.append(ar)
+	v.vdata['xpos'] =    addPath("xpos",projVoice['xpos'])
+	v.vdata['ypos'] =    addPath("ypos",projVoice['ypos'])
+	v.vdata['xsize'] =   addPath("xsize",projVoice['xsize'])
+	v.vdata['ysize'] =   addPath("ysize",projVoice['ysize'])
+	v.vdata['opacity'] = addPath("opacity",projVoice['opacity'])
+	return v
+
+def jsonAbleVoice(v,vname):
+	jav= dict()
+	jav['imgTable'] = v.vdata['imgTable']
+	for nm in jav["imgTable"]:
+		idx = 0
+		for x in nm:
+			idx += 1
+			#print(str(idx)+": "+str(type(x)))
+		# strip the cached image file and calculated aspect ratio, but they may not have been added
+		# yet if just editing voices and saving
+		while len(nm) > 2:
+			del nm[2]
+	jav['xpos'] = v.vdata['xpos'].data
+	jav['ypos'] = v.vdata['ypos'].data
+	jav['xsize'] = v.vdata['xsize'].data
+	jav['ysize'] = v.vdata['ysize'].data
+	jav['opacity'] = v.vdata['opacity'].data
+
+	return jav
+
 class vidExport(QDialog):
 	def __init__(self,ofile):
 		super().__init__()
@@ -344,7 +458,6 @@ class vidExport(QDialog):
 	def initUI(self,ofile):
 		global audioDuration
 		global fRate
-
 
 		self.setWindowTitle('mp4 export')
 		self.ofile = ofile
@@ -368,13 +481,12 @@ class vidExport(QDialog):
 
 	def expSlot(self):
 		global fRate
-		global performanceFile
+		global performance
 		global audioDuration
 
 		# render and output to file in asap time
 		if not self.expInit:
-			print("here1")
-			self.mf = MidiFile(performanceFile)
+			#print("here1")
 			self.startBoard = soundBoard('asap')
 			self.cam = camera(self.ofile,None)
 			self.frameDuration = 1 / fRate
@@ -388,8 +500,8 @@ class vidExport(QDialog):
 			return
 
 		if self.moreEvents:
-			print("here2")
-			for msg in self.mf:
+			#print("here2")
+			for msg in performance:
 				# !!! need to add some breaks in here to allow update of pbar
 				# need to be careful not to drop data.
 				self.aTime += msg.time
@@ -401,7 +513,7 @@ class vidExport(QDialog):
 					if not gotBoard:
 						snap = self.startBoard.currentNotes()
 					# render snap at different frame times
-					self.cam.snapExposure(snap)
+					self.cam.snapExposure(snap,self.frameTime)
 					self.frameTime += self.frameDuration
 					self.frameCount += 1
 					if self.frameCount % 10 == 0:
@@ -412,17 +524,17 @@ class vidExport(QDialog):
 				if msg.type == 'note_on':
 					self.startBoard.noteOn(msg,self.aTime)
 				elif msg.type == 'note_off':
-					self.startBoard.noteOff(msg,self.aTime)
+					self.startBoard.noteOff(msg)
 			self.moreEvents = False
 			QTimer.singleShot(50,self.expSlot)
 			return
 
 		# dead space after all performance Info
 		if not self.moreEvents and not self.allFrames:
-			print("here3")
+			#print("here3")
 			while audioDuration > self.frameTime:
 				#print("gen frame "+str(frameCount -20 ))
-				self.cam.snapExposure(None)
+				self.cam.snapExposure(None,self.frameTime)
 				# render black frame
 				self.frameTime += self.frameDuration
 				self.frameCount += 1
@@ -438,7 +550,7 @@ class vidExport(QDialog):
 
 		if self.allFrames:
 			# write to file then
-			print("here 4")
+			#print("here 4")
 			self.cam.wrap()
 			self.expProgress.setValue(self.totalSteps)
 			time.sleep(0.5)
@@ -566,7 +678,7 @@ class ipath():
 		else:
 			return int(val)
 
-	def getVal(self,note,onTime,velocity):
+	def getVal(self,note,onTime,velocity, aTime = None):
 
 		if self.data['ptype'] == "fixed":
 			return self.present(self.data["usedfor"],self.data["omin"])
@@ -591,7 +703,10 @@ class ipath():
 			val = (velocity - self.data['imin']) * self.data['scaling'] + self.data['omin']
 			return self.present(self.data["usedfor"],val)
 
-		e = time.time() - onTime
+		if aTime == None:
+			e = time.time() - onTime
+		else:
+			e = aTime - onTime
 
 		if self.data['ptype'] == "sweep":
 			val = e * self.data['scaling'] + self.data['omin']
@@ -848,7 +963,7 @@ class camera():
 		self.imgCache = dict()
 		self.pathCache = dict()
 
-	def layerFor(self,ch,n,nvn):
+	def layerFor(self,ch,n,nvn, aTime = None ):
 
 		if len(self.imgCache) == 0:
 			for cv in CVMap:
@@ -899,38 +1014,48 @@ class camera():
 		#print("keys in pathCache ",end = " ")
 		#print(self.pathCache.keys())
 		if n == -2:
-			now = time.time()
+			# this jiggery pokery is fairly arbitrary. It's just to give a safe value
+			# for the note start time in the event that one of the paths for a 'rest'
+			# value is time-based
+			if aTime != None:
+				ago = 0.3
+				if aTime <= ago:
+					now = 0
+				else:
+					now = aTime - ago
+			else:
+				now = time.time()
 
-			l['xpos'] = self.pathCache[ch]['xpos'].getVal(21,now,64)
-			l['ypos'] = self.pathCache[ch]['ypos'].getVal(21,now,64)
-			l['xsize'] = self.pathCache[ch]['xsize'].getVal(21,now,64)
-			l['ysize'] = self.pathCache[ch]['ysize'].getVal(21,now,64)
-			l['opacity'] = self.pathCache[ch]['opacity'].getVal(21,now,64)
+			l['xpos'] = self.pathCache[ch]['xpos'].getVal(21,now,64,aTime)
+			l['ypos'] = self.pathCache[ch]['ypos'].getVal(21,now,64,aTime)
+			l['xsize'] = self.pathCache[ch]['xsize'].getVal(21,now,64,aTime)
+			l['ysize'] = self.pathCache[ch]['ysize'].getVal(21,now,64,aTime)
+			l['opacity'] = self.pathCache[ch]['opacity'].getVal(21,now,64,aTime)
 		else:
 			#print("channel : "+str(ch) + " note = "+str(n))
 			# print("nv 0 and 1 are "+str(nvn[0])+ " and "+ str(nvn[1]))
-			l['xpos'] = self.pathCache[ch]['xpos'].getVal(n,nvn[0],nvn[1]) # note, time velocity
-			l['ypos'] = self.pathCache[ch]['ypos'].getVal(n,nvn[0],nvn[1])
-			l['xsize'] = self.pathCache[ch]['xsize'].getVal(n,nvn[0],nvn[1])
-			l['ysize'] = self.pathCache[ch]['ysize'].getVal(n,nvn[0],nvn[1])
-			l['opacity'] = self.pathCache[ch]['opacity'].getVal(n,nvn[0],nvn[1])
+			l['xpos'] = self.pathCache[ch]['xpos'].getVal(n,nvn[0],nvn[1],aTime) # note, time velocity
+			l['ypos'] = self.pathCache[ch]['ypos'].getVal(n,nvn[0],nvn[1],aTime)
+			l['xsize'] = self.pathCache[ch]['xsize'].getVal(n,nvn[0],nvn[1],aTime)
+			l['ysize'] = self.pathCache[ch]['ysize'].getVal(n,nvn[0],nvn[1],aTime)
+			l['opacity'] = self.pathCache[ch]['opacity'].getVal(n,nvn[0],nvn[1],aTime)
 
 		return l
 
-	def render(self,ch,nv):
+	def render(self,ch,nv,aTime = None):
 		global CVMap
 		global emptyImg
 
 		if len(nv) == 0:
 			#print("rest", end = " ")
-			l = self.layerFor(ch,-2,nv)
+			l = self.layerFor(ch,-2,nv,aTime)
 
 		for n in nv.keys():
 			t = nv[n][0]
 			v = nv[n][1]
 			# so we have channel in ch, note in n and velocity in v
 			# and start time in t.
-			l = self.layerFor(ch,n,nv[n])
+			l = self.layerFor(ch,n,nv[n],aTime)
 
 			# print("in render note: "+str(n)+" xpos: "+str(l['xpos'])+" ypos: "+str(l['ypos'])+" opacity: "+str(l['opacity']))
 
@@ -948,7 +1073,7 @@ class camera():
 	def wrap(self):
 		self.writer.release()
 
-	def snapExposure(self,snap):  # for non-realtime use
+	def snapExposure(self,snap,aTime):  # for non-realtime use
 		if snap == None:
 			self.writer.write(blackImg)
 			return
@@ -956,7 +1081,7 @@ class camera():
 		for ch in snap.keys():
 			#print("Trying to render for channel "+str(ch))
 			#print(snap[ch])
-			layers.append(self.render(ch,snap[ch]))
+			layers.append(self.render(ch,snap[ch],aTime))
 		self.merge(layers)
 
 	def exposure(self):
@@ -1482,7 +1607,7 @@ class CVMapEdit(QDialog):
 						w.setChecked(False)
 					else:
 						listenChannel = self.model._data[i][0]
-						mess("Listening on channel "+str(listenChannel))
+						#mess("Listening on channel "+str(listenChannel))
 		else:
 			#mess("state changed, now unchecked")
 			self.mw.recLED.setPixmap(redLEDOff)
@@ -1492,7 +1617,27 @@ class CVMapEdit(QDialog):
 		global performance
 
 		# mess("here we'd put in code to clear channel "+str(idx-1))
-		print(performance.tracks)
+		trackName = "forChan"+str(idx -1)
+		trackIndex = 0
+		found = False
+		for t in performance.tracks:
+			if performance.tracks[trackIndex].name == trackName:
+				found = True
+				toDelete = trackIndex
+				break
+			trackIndex += 1
+		if not found:
+			err("can't find index for track named '"+trackName+"'")
+		else:
+			#mess("here we'd delete the track with the index "+str(trackIndex))
+			del performance.tracks[toDelete]
+			tl = self.cvm.indexWidget(self.model.index(idx,4))
+			tl.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
+			chanPixmaps[idx -1][1] = True
+			cb = self.cvm.indexWidget(self.model.index(idx,3))
+			cb.setEnabled(False)
+			lc = self.cvm.indexWidget(self.model.index(idx,2))
+			lc.setEnabled(True)
 
 	def comboAdd(self,idx):
 		global wavePixmap
@@ -1502,17 +1647,12 @@ class CVMapEdit(QDialog):
 		global audioFile
 
 		if idx == 0:
-			if audioFile != None:
+			if audioFile != '':
 				self.model._data[idx][1] = audioFile
 		else:
 			selVoiceCombo = QComboBox()
-			selVoiceCombo.clear()
-			selVoiceCombo.addItem("<none>")
-			selVoiceCombo.addItem("+Add New")
-			vc =0
-			for v in voices:
-				vc += 1
-				selVoiceCombo.addItem(v.vdata["name"])
+			populateVoices(selVoiceCombo,True)
+
 			# because of the presence of the sound row, the rows in the internal cvmap are
 			# 1 out of sync with the index of the model.
 			if CVMap[idx -1][1] != None:
@@ -1988,10 +2128,41 @@ class AmenicMain(QMainWindow):
 		self.lastMess = None
 		self.lastPerfMess = None
 
-	def addPath(self,forUse,pathAttr):
-		p = ipath(forUse,pathAttr['ptype'])
-		p.setFromLoad(pathAttr)
-		return p
+
+
+	def newProj(self):
+		global audioFile
+		global performanceFile
+		global iimf
+		global wavePixmap
+		global cleanProj
+
+		if not cleanProj:
+			qm = QtGui.QMessageBox()
+			resp = qm.question(self,'', "Save "+projName+" first? ", qm.Yes | qm.No | qm.Cancel )
+			if resp == qm.Cancel:
+				return
+			if resp == qm.Yes:
+				if projName == "Untitled":
+					self.sPAs()
+				else:
+					self.saveProj()
+
+		cleanProj = True
+		projName = "Untitled"
+		audioFile = ''
+		performanceFile = ''
+		self.setAudio()
+		self.setWaveform(audioFile)
+		self.setMidi(performanceFile)
+
+		performance = MidiFile()
+		voices.clear() # DON'T do voices = [] as that declares a local voices!
+		CVMap.clear()
+		for row in range(0,16):
+			CVMap.append([ row, None,'','',''])
+		self.edComboInit()
+		chanPixmaps.clear()
 
 	def openProj(self):
 		global audioFile
@@ -2012,37 +2183,18 @@ class AmenicMain(QMainWindow):
 
 		for vname in proj["voices"]:
 			# print("Loading voice "+vname)
-			v = voice()
-			v.vdata['name'] = vname
-			v.vdata['imgTable'] = proj["voices"][vname]['imgTable']
-			# cache the images and aspect ratio in the imgTable. So imgtable rows are:
-			# note number, image filename, qpixmap, aspect ratio
-			for nm in v.vdata["imgTable"]:
-				if iimf == 'q':
-					image = QPixmap(nm[1])
-				else:
-					image = cv2.imread(nm[1], cv2.IMREAD_UNCHANGED)
-				nm.append(image) # nm is a ref not a copy right?
-				if iimf == 'q':
-					ar = image.height() / image.width() # multiply target width by ar to get target height
-				else:
-					ar = image.shape[0] / image.shape[1]
-				nm.append(ar)
-			voices.append(v)
-			v.vdata['xpos'] = self.addPath("xpos",proj['voices'][vname]['xpos'])
-			v.vdata['ypos'] = self.addPath("ypos",proj['voices'][vname]['ypos'])
-			v.vdata['xsize'] = self.addPath("xsize",proj['voices'][vname]['xsize'])
-			v.vdata['ysize'] = self.addPath("ysize",proj['voices'][vname]['ysize'])
-			v.vdata['opacity'] = self.addPath("opacity",proj['voices'][vname]['opacity'])
+			internalVoice = internaliseVoice(proj['voices'][vname],vname)
+			voices.append(internalVoice)
 
 		for map in proj["cvmap"]:
 			CVMap.append(map)
 
 		audioFile = proj["audiofile"]
-		MakeWaveform(audioFile,amenicDir +"/tempWave.jpg")
-		wavePixmap = QPixmap(amenicDir + "/tempWave.jpg")
+		self.setWaveform(audioFile)
+
 		self.setAudio()
 		# has to be audio then midi as MakeWaveform calculates the timeLineWidth
+		performanceFile = proj["midifile"]
 		self.setMidi(proj["midifile"])
 
 		self.edComboInit()
@@ -2056,55 +2208,81 @@ class AmenicMain(QMainWindow):
 		exportToMp4 = vidExport(mp4out)
 		exportToMp4.exec_()
 
-	def saveProj(self):
+	def sPAs(self):
+		self.saveProj(True)
+
+	def saveProj(self,saveAs = False):
+		global performanceFile
 		proj = dict()
 		proj["voices"]= dict()
 		for v in voices:
 			vname = v.vdata["name"]
-			proj['voices'][vname]= dict()
-			proj["voices"][vname]['imgTable'] = v.vdata['imgTable']
-			for nm in proj["voices"][vname]["imgTable"]:
-				idx = 0
-				for x in nm:
-					idx += 1
-					#print(str(idx)+": "+str(type(x)))
-				# strip the cached image file and calculated aspect ratio, but they may not have been added
-				# yet if just editing voices and saving
-				while len(nm) > 2:
-					del nm[2]
-			proj['voices'][vname]['xpos'] = v.vdata['xpos'].data
-			proj['voices'][vname]['ypos'] = v.vdata['ypos'].data
-			proj['voices'][vname]['xsize'] = v.vdata['xsize'].data
-			proj['voices'][vname]['ysize'] = v.vdata['ysize'].data
-			proj['voices'][vname]['opacity'] = v.vdata['opacity'].data
+			proj['voices'][vname] = jsonAbleVoice(v,vname)
 
 		proj["cvmap"] = []
 		for map in CVMap:
 			proj["cvmap"].append(map)
 
-		proj["midifile"] = performanceFile
 		proj["audiofile"] = audioFile
 
-		saveData = json.dumps(proj, indent = 1)
+
 		n = projPath + projName + "."+pExtn
-		( sFileName, filter ) = QFileDialog.getSaveFileName(self,"Save Project File",n,"Amenic Project (*.apr)")
-		if sFileName == '':
-			return
-		fh = open(sFileName,"w")
+		if saveAs:
+			( projFileName, filter ) = QFileDialog.getSaveFileName(self,"Save Project File",n,"Amenic Project (*.apr)")
+			if projFileName == '':
+				return
+			# !!! need to save midi, and I'm guessing audio under a different filename. Ultimately we'd want a project
+			# directory or zipfile covering images too, but just saving the midi under the new project name should do
+			performanceFile = re.sub('.'+pExtn+'$','.mid',projFileName)
+		else:
+			projFileName = n
+		proj["midifile"] = performanceFile
+		performance.save(performanceFile)
+
+		saveData = json.dumps(proj, indent = 1)
+		fh = open(projFileName,"w")
 		fh.write(saveData)
 		fh.close()
 
 	def exportVoice(self):
-		mess("Here we'd export a single voice to a voice file")
+		ve = voiceExport()
+		ve.exec_()
+		voiceName = ve.selVoice
+		if ve == None:
+			return
+		v = getVoiceByName(voiceName)
+		saveData = json.dumps(jsonAbleVoice(v,voiceName), indent = 1)
+		n = projPath + voiceName + ".avc"
+		( avcOut, filter ) = QFileDialog.getSaveFileName(self,"Export to Amenic voice file",n,"Avc files (*.avc)")
+		if avcOut == '':
+			return
+		fh = open(avcOut,"w")
+		fh.write(saveData)
+		fh.close()
 
 	def importVoice(self):
-		mess("Here we'd import a single voice from a voice file into the current project")
+		( avcIn, filter ) = QFileDialog.getOpenFileName(self,"Import from Amenic voice file",'./',"Avc files (*.avc)")
+		if avcIn == '':
+			return
+		vfname = os.path.basename(avcIn)
+		vfname = re.sub('.avc$','',vfname)
+		cv = getVoiceByName(vfname)
+		if cv != None:
+			mess("Name collision "+ vfname)
+			return
+		fh = open(avcIn,'r')
+		loadData = fh.read()
+		fh.close()
+		lv = json.loads(loadData)
+		iv = internaliseVoice(lv,vfname)
+		voices.append(iv)
+		self.edComboInit()
 
 	def setAudio(self):
 		global audioFile
 		global audioDuration
 
-		if audioFile != None:
+		if audioFile != '':
 			self.ssFileShow.setText(audioFile)
 			self.btnPlay.setEnabled(True)
 			# may as well initialise the audio player here
@@ -2114,15 +2292,29 @@ class AmenicMain(QMainWindow):
 			self.adShow.setText(f'{audioDuration:.2f}')
 			self.difShow.setText(str(durationInFrames))
 			self.st = vlc.MediaPlayer("File://"+audioFile)
-		elif performance == None:
-			self.btnPlay.setEnabled(False)
+		else:
+			self.ssFileShow.setText('')
+			self.adShow.setText('')
+			self.difShow.setText('')
+			self.st = None
+			if performance == None:
+				self.btnPlay.setEnabled(False)
+
+	def setWaveform(self,audioFile):
+		global wavePixmap
+
+		if audioFile == '':
+			wavePixmap = QPixmap(amenicDir + "nowave.jpg")
+		else:
+			MakeWaveform(audioFile,amenicDir +"/tempWave.jpg")
+			wavePixmap = QPixmap(amenicDir + "/tempWave.jpg")
 
 	def importAudio(self):
 		global audioFile
 
 		( audioFile, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Sound files (*.mp3)")
-		if audioFile != '':
-			self.setAudio()
+		self.setAudio()
+		self.setWaveform(audioFile)
 
 	def setMidi(self, performanceFile):
 		global performance
@@ -2135,8 +2327,11 @@ class AmenicMain(QMainWindow):
 			midiTiming(performance) # this actually extracts info from the file
 			self.bpmShow.setText(str(bpm))
 			makeChannelTimelines(performance)
-		elif audioFile == None:
-			self.btnPlay.setEnabled(False)
+		else:
+			self.mpFileShow.setText('')
+			self.bpmShow.setText('')
+			if audioFile == '':
+				self.btnPlay.setEnabled(False)
 
 	def importMidi(self):
 		global performanceFile
@@ -2224,7 +2419,7 @@ class AmenicMain(QMainWindow):
 
 		self.stopFlag = False
 		# this shouldn't happen, but:
-		if performance == None and audioFile == None:
+		if performance == None and audioFile == '':
 			err("Nothing to play")
 			return
 
@@ -2234,13 +2429,14 @@ class AmenicMain(QMainWindow):
 			self.livePerfTimer.timeout.connect(self.checkPerfSlot)
 			self.performanceStartTime = time.time()
 			self.track = MidiTrack()
+			self.track.name = "forChan"+str(listenChannel)
 			performance.tracks.append(self.track)
 			self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
 			self.lastEventTime = self.performanceStartTime
 			self.startPerfTimer()
 
 		# I'm rather suspecting that st player will be blocking. We'll see
-		if audioFile != None:
+		if audioFile != '':
 			self.st.play()
 			self.btnStop.setEnabled(True)
 
@@ -2307,6 +2503,11 @@ class AmenicMain(QMainWindow):
 		for row in range(0,16):
 			CVMap.append([ row, None])
 
+		newPAct = QAction(QIcon(),'New Project',self)
+		newPAct.setShortcut('Ctrl+N')
+		newPAct.setStatusTip("New Project")
+		newPAct.triggered.connect(self.newProj)
+
 		openPAct = QAction(QIcon(),'Open Project',self)
 		openPAct.setShortcut('Ctrl+O')
 		openPAct.setStatusTip('Open Project')
@@ -2316,6 +2517,10 @@ class AmenicMain(QMainWindow):
 		savePAct.setShortcut('Ctrl+S')
 		savePAct.setStatusTip('Save Project')
 		savePAct.triggered.connect(self.saveProj)
+
+		savePAsAct = QAction(QIcon(), 'Save Project As', self)
+		savePAsAct.setStatusTip('Save Project As')
+		savePAsAct.triggered.connect(self.sPAs)
 
 		expVAct = QAction(QIcon(), 'Export Voice', self)
 		expVAct.setShortcut('Ctrl+E')
@@ -2343,8 +2548,10 @@ class AmenicMain(QMainWindow):
 
 		menubar = self.menuBar()
 		fileMenu = menubar.addMenu('&File')
+		fileMenu.addAction(newPAct)
 		fileMenu.addAction(openPAct)
 		fileMenu.addAction(savePAct)
+		fileMenu.addAction(savePAsAct)
 		fileMenu.addAction(expVAct)
 		fileMenu.addAction(impVAct)
 		fileMenu.addAction(impMAct)
