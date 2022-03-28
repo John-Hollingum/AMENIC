@@ -15,10 +15,16 @@ tickDuration = 1041 # microseconds based on bpm 120, ticksPerBeat 480,
 listenChannel = 3 # say
 port = mido.open_input('Steinberg UR22mkII  Port1')
 secondaryMidiFile = MidiFile("/Users/johnhollingum/Documents/AMENIC/test.mid")
+
+for m in secondaryMidiFile:
+	if str(m.type) == 'set_tempo':
+		print(m)
+quit()
 track = MidiTrack()
 secondaryMidiFile.tracks.append(track)
 lastMess = Message('program_change', program=12, time=0)
 lastEventTime = time.time()
+
 
 while True:
 	msg = port.poll()

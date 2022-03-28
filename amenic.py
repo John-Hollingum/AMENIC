@@ -6,7 +6,7 @@ import jsonpickle # pip install jsonpickle
 import json
 import time
 import mido
-from mido import MidiFile, MidiTrack, Message
+from mido import MidiFile, MidiTrack, Message, MetaMessage
 from decimal import *
 from functools import partial
 from PyQt5.QtWidgets import *
@@ -2128,35 +2128,94 @@ class AmenicMain(QMainWindow):
 		self.lastMess = None
 		self.lastPerfMess = None
 
+	def setGotAudio(self,gotAudio):
+		self.setPlayable(gotAudio)
+		self.newPAct.setEnabled(gotAudio)
+		# non-invertable states:
+		if not gotAudio:
+			self.savePAct.setEnabled(False)
+			self.expVAct.setEnabled(False)
+			self.expVidAct.setEnabled(False)
+		self.savePAsAct.setEnabled(gotAudio)
+		self.impVAct.setEnabled(gotAudio)
+		self.impMAct.setEnabled(gotAudio)
 
+	def setGotVoices(self,gotVoices):
+		self.expVAct.setEnabled(gotVoices)
 
-	def newProj(self):
+	def setGotMappedVoices(self,gotMappedVoices):
+		pass
+
+	def setGotProjName(self,gotProjName):
+		global cleanProj
+
+		self.savePAct.setEnabled(gotProjName and not cleanProj)
+
+	def setPlayable(self,playable):
+		# just means the play button should be active, not that there is
+		# enough data to generate video
+		self.btnPlay.setEnabled(playable)
+		#self.expVidAct.setEnabled(playable)
+
+	def setClean(self,clean):
+		global cleanProj
+		global projName
+
+		gotProjName = ( projName != 'Untitled')
+		self.savePAct.setEnabled((not clean) and gotProjName)
+		self.dirtyCheck.setChecked(not clean)
+		cleanProj = clean
+
+	def checkSave(self):
+		qm = QMessageBox()
+		resp = qm.question(self,'', "Save "+projName+" first? ", qm.Yes | qm.No | qm.Cancel )
+		if resp == qm.Cancel:
+			return False
+		if resp == qm.Yes:
+			if projName == "Untitled":
+				self.sPAs()
+			else:
+				self.saveProj()
+		return True
+
+	def closeEvent(self,event):
+		if not cleanProj:
+			if self.checkSave():
+				event.accept()
+			else:
+				return # they hit cancel
+
+	def emptyProj(self):
 		global audioFile
 		global performanceFile
+		global performance
 		global iimf
 		global wavePixmap
 		global cleanProj
+		global projName
 
-		if not cleanProj:
-			qm = QtGui.QMessageBox()
-			resp = qm.question(self,'', "Save "+projName+" first? ", qm.Yes | qm.No | qm.Cancel )
-			if resp == qm.Cancel:
-				return
-			if resp == qm.Yes:
-				if projName == "Untitled":
-					self.sPAs()
-				else:
-					self.saveProj()
-
-		cleanProj = True
+		self.setClean(True)
+		self.loading = False
 		projName = "Untitled"
 		audioFile = ''
 		performanceFile = ''
+		self.setGotAudio(False)
 		self.setAudio()
 		self.setWaveform(audioFile)
 		self.setMidi(performanceFile)
 
 		performance = MidiFile()
+		# need to stuff in a tempo Message
+		# make a pure tempo track. This is fairly normally the first track in a type 1 midi file
+		tt = MidiTrack()
+		tt.name = 'Tempo Track'
+		performance.tracks.append(tt)
+		bpm = 120
+		ctempo = int(60000000 /bpm)
+		msg = MetaMessage('set_tempo',tempo = ctempo, time = 0 )
+		tt.append(msg)
+
+		midiTiming(performance)
 		voices.clear() # DON'T do voices = [] as that declares a local voices!
 		CVMap.clear()
 		for row in range(0,16):
@@ -2164,11 +2223,20 @@ class AmenicMain(QMainWindow):
 		self.edComboInit()
 		chanPixmaps.clear()
 
+	def newProj(self):
+		global cleanProj
+
+		if not cleanProj:
+			if not self.checkSave():
+				return
+		self.emptyProj()
+
 	def openProj(self):
 		global audioFile
 		global performanceFile
 		global iimf
 		global wavePixmap
+		global projName
 
 		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Project File', projPath,"Amenic Project files (*.apr)")
 		if fname == '':
@@ -2180,11 +2248,17 @@ class AmenicMain(QMainWindow):
 		proj = json.loads(loadData)
 		voices.clear() # DON'T do voices = [] as that declares a local voices!
 		CVMap.clear()
+		self.setClean(True)
+		projName = os.path.basename(fname)
+		projName = re.sub('.apr$','',projName)
+		self.setWindowTitle('Amenic - '+fname)
 
 		for vname in proj["voices"]:
 			# print("Loading voice "+vname)
 			internalVoice = internaliseVoice(proj['voices'][vname],vname)
 			voices.append(internalVoice)
+		if len(voices) > 0:
+			self.setGotVoices(True)
 
 		for map in proj["cvmap"]:
 			CVMap.append(map)
@@ -2199,6 +2273,8 @@ class AmenicMain(QMainWindow):
 
 		self.edComboInit()
 		self.loading = False
+		self.setGotAudio(True)
+		self.setGotProjName(True)
 
 	def genVid(self):
 		n = projPath + projName + ".mp4"
@@ -2233,9 +2309,10 @@ class AmenicMain(QMainWindow):
 				return
 			# !!! need to save midi, and I'm guessing audio under a different filename. Ultimately we'd want a project
 			# directory or zipfile covering images too, but just saving the midi under the new project name should do
-			performanceFile = re.sub('.'+pExtn+'$','.mid',projFileName)
 		else:
 			projFileName = n
+		if performanceFile == '' or saveAs:
+			performanceFile = re.sub('.'+pExtn+'$','.mid',projFileName)
 		proj["midifile"] = performanceFile
 		performance.save(performanceFile)
 
@@ -2243,6 +2320,8 @@ class AmenicMain(QMainWindow):
 		fh = open(projFileName,"w")
 		fh.write(saveData)
 		fh.close()
+		self.setClean(True)
+		self.setGotProjName(True)
 
 	def exportVoice(self):
 		ve = voiceExport()
@@ -2277,6 +2356,8 @@ class AmenicMain(QMainWindow):
 		iv = internaliseVoice(lv,vfname)
 		voices.append(iv)
 		self.edComboInit()
+		self.setClean(False)
+		self.setGotVoices(True)
 
 	def setAudio(self):
 		global audioFile
@@ -2284,7 +2365,8 @@ class AmenicMain(QMainWindow):
 
 		if audioFile != '':
 			self.ssFileShow.setText(audioFile)
-			self.btnPlay.setEnabled(True)
+			self.setPlayable(True)
+
 			# may as well initialise the audio player here
 			audio = MP3(audioFile)
 			audioDuration = audio.info.length
@@ -2298,7 +2380,7 @@ class AmenicMain(QMainWindow):
 			self.difShow.setText('')
 			self.st = None
 			if performance == None:
-				self.btnPlay.setEnabled(False)
+				self.setPlayable(False)
 
 	def setWaveform(self,audioFile):
 		global wavePixmap
@@ -2315,30 +2397,43 @@ class AmenicMain(QMainWindow):
 		( audioFile, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Sound files (*.mp3)")
 		self.setAudio()
 		self.setWaveform(audioFile)
+		self.setClean(False)
+		self.setGotAudio(True)
+		self.setPlayable(True) # in a limited sort of way
 
 	def setMidi(self, performanceFile):
 		global performance
 		global bpm
 
 		if performanceFile != '':
+
 			performance = MidiFile(performanceFile)
-			self.btnPlay.setEnabled(True)
+			self.setPlayable(True)
 			self.mpFileShow.setText(performanceFile)
 			midiTiming(performance) # this actually extracts info from the file
 			self.bpmShow.setText(str(bpm))
 			makeChannelTimelines(performance)
+
+			self.setPlayable(True)
 		else:
 			self.mpFileShow.setText('')
 			self.bpmShow.setText('')
-			if audioFile == '':
-				self.btnPlay.setEnabled(False)
+			if audioFile == '' and performance == None:
+				self.setPlayable(False)
 
 	def importMidi(self):
 		global performanceFile
 
-		# !!! need to resolve how this sets the project midi file
+		if performance != None:
+			qm = QMessageBox()
+			resp = qm.question(self,'', "OK to overwrite existing performance information? ", qm.Yes | qm.No )
+			if resp == qm.Yes:
+				pass
+			else:
+				return
 		(performanceFile, filter) = QFileDialog.getOpenFileName(self,'Open Performance File','./',"Midi files (*.mid *.MID)")
 		self.setMidi(performanceFile)
+		self.setClean(False)
 
 	def playslot(self):
 		# this pushes out the events in the performance in (roughly) the right timing
@@ -2479,6 +2574,8 @@ class AmenicMain(QMainWindow):
 		if v != None:
 			voices.append(v)
 			self.edComboInit()
+			self.setGotVoices(True)
+			self.setClean(False)
 
 	def initUI(self):
 		global emptyImg
@@ -2503,60 +2600,60 @@ class AmenicMain(QMainWindow):
 		for row in range(0,16):
 			CVMap.append([ row, None])
 
-		newPAct = QAction(QIcon(),'New Project',self)
-		newPAct.setShortcut('Ctrl+N')
-		newPAct.setStatusTip("New Project")
-		newPAct.triggered.connect(self.newProj)
+		self.newPAct = QAction(QIcon(),'New Project',self)
+		self.newPAct.setShortcut('Ctrl+N')
+		self.newPAct.setStatusTip("New Project")
+		self.newPAct.triggered.connect(self.newProj)
 
 		openPAct = QAction(QIcon(),'Open Project',self)
 		openPAct.setShortcut('Ctrl+O')
 		openPAct.setStatusTip('Open Project')
 		openPAct.triggered.connect(self.openProj)
 
-		savePAct = QAction(QIcon(), 'Save Project', self)
-		savePAct.setShortcut('Ctrl+S')
-		savePAct.setStatusTip('Save Project')
-		savePAct.triggered.connect(self.saveProj)
+		self.savePAct = QAction(QIcon(), 'Save Project', self)
+		self.savePAct.setShortcut('Ctrl+S')
+		self.savePAct.setStatusTip('Save Project')
+		self.savePAct.triggered.connect(self.saveProj)
 
-		savePAsAct = QAction(QIcon(), 'Save Project As', self)
-		savePAsAct.setStatusTip('Save Project As')
-		savePAsAct.triggered.connect(self.sPAs)
+		self.savePAsAct = QAction(QIcon(), 'Save Project As', self)
+		self.savePAsAct.setStatusTip('Save Project As')
+		self.savePAsAct.triggered.connect(self.sPAs)
 
-		expVAct = QAction(QIcon(), 'Export Voice', self)
-		expVAct.setShortcut('Ctrl+E')
-		expVAct.setStatusTip('Export Voice')
-		expVAct.triggered.connect(self.exportVoice)
+		self.expVAct = QAction(QIcon(), 'Export Voice', self)
+		self.expVAct.setShortcut('Ctrl+E')
+		self.expVAct.setStatusTip('Export Voice')
+		self.expVAct.triggered.connect(self.exportVoice)
 
-		impVAct = QAction(QIcon(), 'Import Voice', self)
-		impVAct.setShortcut('Ctrl+I')
-		impVAct.setStatusTip('Import Voice')
-		impVAct.triggered.connect(self.importVoice)
+		self.impVAct = QAction(QIcon(), 'Import Voice', self)
+		self.impVAct.setShortcut('Ctrl+I')
+		self.impVAct.setStatusTip('Import Voice')
+		self.impVAct.triggered.connect(self.importVoice)
 
-		impMAct = QAction(QIcon(), 'Import Midi', self)
-		impMAct.setShortcut('Ctrl+M')
-		impMAct.setStatusTip('Import Midi')
-		impMAct.triggered.connect(self.importMidi)
+		self.impMAct = QAction(QIcon(), 'Import Midi', self)
+		self.impMAct.setShortcut('Ctrl+M')
+		self.impMAct.setStatusTip('Import Midi')
+		self.impMAct.triggered.connect(self.importMidi)
 
 		impAAct = QAction(QIcon(), 'Import Audio', self)
 		impAAct.setShortcut('Ctrl+A')
 		impAAct.setStatusTip('Import Audio')
 		impAAct.triggered.connect(self.importAudio)
 
-		expVidAct = QAction(QIcon(),'Generate MP4',self)
-		expVidAct.setStatusTip('Export project video to MP4 file')
-		expVidAct.triggered.connect(self.genVid)
+		self.expVidAct = QAction(QIcon(),'Generate MP4',self)
+		self.expVidAct.setStatusTip('Export project video to MP4 file')
+		self.expVidAct.triggered.connect(self.genVid)
 
 		menubar = self.menuBar()
 		fileMenu = menubar.addMenu('&File')
-		fileMenu.addAction(newPAct)
+		fileMenu.addAction(self.newPAct)
 		fileMenu.addAction(openPAct)
-		fileMenu.addAction(savePAct)
-		fileMenu.addAction(savePAsAct)
-		fileMenu.addAction(expVAct)
-		fileMenu.addAction(impVAct)
-		fileMenu.addAction(impMAct)
+		fileMenu.addAction(self.savePAct)
+		fileMenu.addAction(self.savePAsAct)
+		fileMenu.addAction(self.expVAct)
+		fileMenu.addAction(self.impVAct)
+		fileMenu.addAction(self.impMAct)
 		fileMenu.addAction(impAAct)
-		fileMenu.addAction(expVidAct)
+		fileMenu.addAction(self.expVidAct)
 
 		self.cMapBtn = QPushButton("Layers")
 		self.cMapBtn.clicked.connect(self.channelMap)
@@ -2568,6 +2665,11 @@ class AmenicMain(QMainWindow):
 		self.edCombo = QComboBox(self)
 		self.edComboInit()
 		self.edCombo.currentIndexChanged.connect(self.edSelChg)
+
+		self.dirtyCheck = QCheckBox()
+		self.dirtyCheck.setTristate(False)
+		self.dirtyCheck.setChecked(False)
+		self.dirtyCheck.setEnabled(False)
 
 		ssLabel = QLabel('Sound Source',self)
 		self.ssFileShow= QLineEdit(self)
@@ -2626,6 +2728,7 @@ class AmenicMain(QMainWindow):
 
 		hbox1.addWidget(edLabel)
 		hbox1.addWidget(self.edCombo)
+		hbox1.addWidget(self.dirtyCheck)
 
 		vbox1.addLayout(hbox1)
 
@@ -2660,6 +2763,9 @@ class AmenicMain(QMainWindow):
 
 		# Set the central widget of the Window.
 		self.setCentralWidget(container)
+		self.setGotAudio(False)
+
+		self.emptyProj() # same code as used by newProj
 
 	def edSelChg(self,i):
 		if self.edCombo.currentText() != "<Select Voice To Edit>":
@@ -2692,6 +2798,8 @@ class AmenicMain(QMainWindow):
 		vn = self.activeV.vdata["name"]
 		if vn != "Untitled" and vn != '' and vn != None:
 			voices.append(self.activeV)
+			self.setGotVoices(True)
+			self.setClean(False)
 			return vn
 		else:
 			return None
