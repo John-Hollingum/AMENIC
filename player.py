@@ -9,23 +9,41 @@ port = mido.open_output('Steinberg UR22mkII  Port1')
 #	for msg in track:
 #		print(msg)
 
-#mf = MidiFile('/users/johnhollingum/Documents/AMENIC/2chan.mid')
-#mf = MidiFile('/users/johnhollingum/Documents/AMENIC/secmid.mid')
-mf = MidiFile('/users/johnhollingum/Documents/AMENIC/test.mid')
+#mf = MidiFile('/users/johnhollingum/Documents/AMENIC/ticktest.mid')
+mf = MidiFile('/users/johnhollingum/Documents/AMENIC/t16.mid')
 print("ticks per beat : "+str(mf.ticks_per_beat))
 
 for msg in mf:
 	if msg.type == 'set_tempo':
 		print(msg)
 		print("bpm = "+str(60000000/msg.tempo))
+		bd = msg.tempo / 1000000 # convert to seconds
 		print("beat duration = "+str(msg.tempo)+ " microseconds")
 		print("tick duration = "+ str(msg.tempo/mf.ticks_per_beat)+" microseconds")
 
+for i, track in enumerate(mf.tracks):
+	print('Track {}: {}'.format(i, track.name))
+	chans = []
+	msgTypes = []
+	for msg in track:
+		#print(str(type(msg)))
+		if msgTypes.count(msg.type) == 0:
+			msgTypes.append(msg.type)
+		if str(type(msg)) != "<class 'mido.midifiles.meta.MetaMessage'>":
+			if chans.count(msg.channel) == 0:
+				chans.append(msg.channel)
+	print("Track "+str(i)+" contains events for channels ",end='')
+	print(chans)
+	print("Track "+str(i)+ " contains messages of type ",end='')
+	print(msgTypes)
+quit()
+at = 0
 for msg in mf:
+
+	print("t = "+ str(at)+" beats = "+str(at/bd))
 	print(msg)
-	time.sleep(msg.time)
-	if not msg.is_meta:
-		port.send(msg)
+	at += msg.time
+
 
 
 

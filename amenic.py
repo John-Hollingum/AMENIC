@@ -13,7 +13,8 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import QPixmap, QPainter, QPen, QPalette, QIcon, QColor, QStandardItemModel, QStandardItem, QGuiApplication
 import sys
-import vlc
+#import vlc
+from pygame import mixer
 import os, subprocess
 import shutil
 from mutagen.mp3 import MP3
@@ -36,8 +37,8 @@ presTable = []
 CVMap = []
 tWidth = 960
 tHeight = 540
-mainWindowX = 1020
-mainWindowY = 600
+mainWindowX = tWidth + 24
+mainWindowY = 560
 layerWindowX = 970
 #fRate = 24
 fRate = 12
@@ -319,6 +320,13 @@ def drawline(snap,msg,aTime):
 					p.drawLine(x1, y1, x2, y2)
 					p.end()
 
+def checkVidGen(mw):
+	cg = False
+	for i in range(0,16):
+		if not chanPixmaps[i][1]:
+			cg = True
+	mw.setCanGenVid(cg)
+
 def makeChannelTimelines(mf):
 	global timeLineWidth
 	global timeLineHeight
@@ -333,6 +341,7 @@ def makeChannelTimelines(mf):
 	startBoard = soundBoard('asap')
 	aTime = 0
 	frameTime = 0
+	#mess("in makeChannelTimelines")
 	for msg in mf:
 		aTime += msg.time
 		gotBoard = False
@@ -345,6 +354,9 @@ def makeChannelTimelines(mf):
 		elif msg.type == 'note_off':
 			drawline(snap,msg,aTime)
 			startBoard.noteOff(msg)
+	#for i in range(0,16):
+	#	if not chanPixmaps[i][1]:
+	#		mess(str(i)+ " isn't clean")
 
 class voiceExport(QDialog):
 	def __init__(self):
@@ -500,7 +512,7 @@ class vidExport(QDialog):
 			return
 
 		if self.moreEvents:
-			#print("here2")
+			print("here2")
 			for msg in performance:
 				# !!! need to add some breaks in here to allow update of pbar
 				# need to be careful not to drop data.
@@ -531,7 +543,7 @@ class vidExport(QDialog):
 
 		# dead space after all performance Info
 		if not self.moreEvents and not self.allFrames:
-			#print("here3")
+			print("here3")
 			while audioDuration > self.frameTime:
 				#print("gen frame "+str(frameCount -20 ))
 				self.cam.snapExposure(None,self.frameTime)
@@ -543,7 +555,7 @@ class vidExport(QDialog):
 				#print(" aTime "+str(audioDuration)+" frame time "+str(frameTime))
 				if self.frameCount % 100 == 0:
 					break # let the UI update
-			if audioDuration >= self.frameTime:
+			if audioDuration <= self.frameTime:
 				self.allFrames = True
 			QTimer.singleShot(50,self.expSlot)
 			return
@@ -746,6 +758,8 @@ def cvLayers(layers):
 # class that does the painting of the theatre display on the main window
 class theatreLabel(QLabel):
 	def __init__(self, parent):
+		global tWidth, tHeight
+
 		super().__init__(parent=parent)
 		self.setStyleSheet('QFrame {background-color:grey;}')
 		self.resize(tWidth, tHeight)
@@ -957,7 +971,7 @@ class camera():
 			quit()
 		else:
 			self.theatreMode = False
-			fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+			fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 			self.writer = cv2.VideoWriter(fname, fourcc, fRate, (tWidth,tHeight))
 		self.cacheShow =''
 		self.imgCache = dict()
@@ -1638,6 +1652,7 @@ class CVMapEdit(QDialog):
 			cb.setEnabled(False)
 			lc = self.cvm.indexWidget(self.model.index(idx,2))
 			lc.setEnabled(True)
+			checkVidGen(self.mw)
 
 	def comboAdd(self,idx):
 		global wavePixmap
@@ -2151,11 +2166,13 @@ class AmenicMain(QMainWindow):
 
 		self.savePAct.setEnabled(gotProjName and not cleanProj)
 
+	def setCanGenVid(self,canGen):
+		self.expVidAct.setEnabled(canGen)
+
 	def setPlayable(self,playable):
 		# just means the play button should be active, not that there is
 		# enough data to generate video
 		self.btnPlay.setEnabled(playable)
-		#self.expVidAct.setEnabled(playable)
 
 	def setClean(self,clean):
 		global cleanProj
@@ -2275,6 +2292,7 @@ class AmenicMain(QMainWindow):
 		self.loading = False
 		self.setGotAudio(True)
 		self.setGotProjName(True)
+		checkVidGen(self)
 
 	def genVid(self):
 		n = projPath + projName + ".mp4"
@@ -2312,7 +2330,7 @@ class AmenicMain(QMainWindow):
 		else:
 			projFileName = n
 		if performanceFile == '' or saveAs:
-			performanceFile = re.sub('.'+pExtn+'$','.mid',projFileName)
+			performanceFile = re.sub('.'+pExtn+'$','.apf',projFileName)
 		proj["midifile"] = performanceFile
 		performance.save(performanceFile)
 
@@ -2373,7 +2391,10 @@ class AmenicMain(QMainWindow):
 			durationInFrames = int(audioDuration * fRate)
 			self.adShow.setText(f'{audioDuration:.2f}')
 			self.difShow.setText(str(durationInFrames))
-			self.st = vlc.MediaPlayer("File://"+audioFile)
+			mixer.init()
+			mixer.music.load("/Users/johnhollingum/Documents/AMENIC/sixteenbars.mp3")
+			self.st = "got audio"
+			#self.st = vlc.MediaPlayer("File://"+audioFile)
 		else:
 			self.ssFileShow.setText('')
 			self.adShow.setText('')
@@ -2401,13 +2422,47 @@ class AmenicMain(QMainWindow):
 		self.setGotAudio(True)
 		self.setPlayable(True) # in a limited sort of way
 
-	def setMidi(self, performanceFile):
+	def convertPerformance(self):
+		global performance
+
+		# analyse and adjust raw midi file to .apf requirements
+		if performance.type == 0:
+			performance.type = 1
+			# think that's about all there is to that
+		elif performance.type == 2:
+			err("Can't import files with midi type 2")
+			return False
+		gotTrackFor =[]
+		for i, track in enumerate(performance.tracks):
+			#print('Track {}: {}'.format(i, track.name))
+			chans = []
+			msgTypes = []
+			for msg in track:
+				#print(str(type(msg)))
+				if msgTypes.count(msg.type) == 0:
+					msgTypes.append(msg.type)
+				if str(type(msg)) != "<class 'mido.midifiles.meta.MetaMessage'>":
+					if chans.count(msg.channel) == 0:
+						chans.append(msg.channel)
+			#print("Track "+str(i)+" contains events for channels ",end='')
+			#print(chans)
+			if len(chans) > 1:
+				err('Too complicated: multiple channels per track')
+				return False
+			if gotTrackFor.count(chans[0]) != 0:
+				err('Too complicated: multiple tracks with events for channel '+str(chans[0]))
+				return False
+			track.name = "forChan"+str(chans[0])
+
+	def setMidi(self, performanceFile, imported = False):
 		global performance
 		global bpm
 
 		if performanceFile != '':
 
 			performance = MidiFile(performanceFile)
+			if imported:
+				self.convertPerformance()
 			self.setPlayable(True)
 			self.mpFileShow.setText(performanceFile)
 			midiTiming(performance) # this actually extracts info from the file
@@ -2431,8 +2486,8 @@ class AmenicMain(QMainWindow):
 				pass
 			else:
 				return
-		(performanceFile, filter) = QFileDialog.getOpenFileName(self,'Open Performance File','./',"Midi files (*.mid *.MID)")
-		self.setMidi(performanceFile)
+		(performanceFile, filter) = QFileDialog.getOpenFileName(self,'Open Midi File','./',"Midi files (*.mid *.MID)")
+		self.setMidi(performanceFile, True)
 		self.setClean(False)
 
 	def playslot(self):
@@ -2530,11 +2585,6 @@ class AmenicMain(QMainWindow):
 			self.lastEventTime = self.performanceStartTime
 			self.startPerfTimer()
 
-		# I'm rather suspecting that st player will be blocking. We'll see
-		if audioFile != '':
-			self.st.play()
-			self.btnStop.setEnabled(True)
-
 		if performance != None:
 
 			if len(CVMap)==0:
@@ -2555,10 +2605,23 @@ class AmenicMain(QMainWindow):
 		else:
 			msgBox("Audio only, no performance info")
 
+		if audioFile != '':
+			#self.st.play()
+			mixer.music.play()
+			self.btnStop.setEnabled(True)
+
 	def channelMap(self):
+		global CVMap
+
 		cvm = CVMapEdit(self)
 		cvm.exec_()
 		self.edComboInit() # new voices may have been added
+		# if an existing populated track has been assigned a voice, this will now be
+		# generatable
+		for i in range(0,16):
+			if not chanPixmaps[i][1]:
+				if CVMap[i][1] != "<none>":
+					self.setCanGenVid(True)
 
 	def edComboInit(self):
 		self.edCombo.clear()
@@ -2695,6 +2758,7 @@ class AmenicMain(QMainWindow):
 		self.recLED.setPixmap(redLEDOff)
 
 		theatre = theatreLabel(self)
+		theatre.setMaximumHeight(tHeight)
 		emptyPath = amenicDir+"/Empty.png"
 
 		cleanPixmap = QPixmap(amenicDir+"/clean.png")
@@ -2809,12 +2873,14 @@ class AmenicMain(QMainWindow):
 
 		self.stopFlag = True # stops midi listener and camera
 		self.p.stop() # stops midfile player
-		self.st.stop() # stops audio playback
+		#self.st.stop() # stops audio playback
+		mixer.stop()
 		self.btnStop.setEnabled(False)
 		if listenChannel != None:
 			self.track.append(self.lastPerfMess)
-			performance.save(amenicDir + "/secmid.mid")
+			performance.save(amenicDir + "/secmid.apf")
 			makeChannelTimelines(performance)
+			self.setCanGenVid(True)
 
 if __name__ == '__main__':
 	app = QApplication(sys.argv)

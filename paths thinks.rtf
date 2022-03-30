@@ -197,6 +197,36 @@ Ton of testing\
 \
 Need to look at the qualiity of syncronisation \
 \
+mp4 export progressbar gets stuck\
+\
+Some issue adding new layers onto imported midi. Most likely because of lack of track name on imported midi\
+\
+?add sound to mp4?\
+\
+get dump of content of mid file\
+\
+Midi files have a header chunk of type MThd followed by four bytes indicating its chunk length, which is always 6 ( 00 00 00 06 ) Followed by 6 bytes as 3 16bit integers, indicating \
+\
+the midi format (I\'92m expecting 00 01 )\
+the number of track chunks\
+the division which describes the unit of delta time \
+\
+tracks contain no mandatory identifier. No name, no index number. The first one is the 0 track, the next one is 1, but that\'92s just kind of how it is interpreted.\
+\
+I think import *is* important, if only for sync testing, but if we are going to be able to handle them properly, we need to either convert them to our expectations or make a more open-ended way of identifying track-layer correspondence.\
+\
+I say we have Amenic Performance Files. They are midi files of a rather particular structure, we save them as .apf files. We can import midi .mid files but we don\'92t save to .mid and when we import.mid, we do some fixup in memory which will be reflected in the .apf file, but not written back to the .mid \
+\
+What\'92s involved in the fixup? If there is no track used exclusively for tempo events we create one in position 0 in the tracklist and move any tempo events to it.\
+If there is a pure tempo track we move it to position 0.\
+similarly with events on particular channels, we ensure they are in their own track and that the track has an appropriate track name event.\
+When moving events, in order to maintain the time deltas, we need to put in non-significant events to replace the ones we removed.\
+\
+Nah, the arsing about with the tempo track is unnecessary. Just apply the \'91forchan\'92 name \
+\
+Can\'92t gen mp4 on the basis of loaded (as opposed to recorded) midi\
+###\
+\
 pause and seek position, punch in. etc -similar to timeline gen and mp4 gen\
 \
 more paths \
