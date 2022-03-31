@@ -19,6 +19,7 @@ import os, subprocess
 import shutil
 from mutagen.mp3 import MP3
 import re
+from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 wavePixmap = None
 chanPixmaps = []
@@ -460,8 +461,6 @@ class vidExport(QDialog):
 		super().__init__()
 		self.setModal(True)
 		self.initUI(ofile)
-		self.expInit = False
-		self.allFrames = False
 		self.cframe = 0
 
 	def cancelExp(self):
@@ -477,18 +476,19 @@ class vidExport(QDialog):
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
 		self.expProgress = QProgressBar()
 		nframes = int(audioDuration * fRate )
-		self.totalSteps = 20 + nframes + 20 # wild guess that start, stop processing takes about as long as processiing 20 frames
+		self.totalSteps = 20 + nframes + 40 # wild guess that start, stop processing takes about as long as processiing 20 frames
 		self.expProgress.setRange(0,self.totalSteps)
 		cvalue = 20
 		self.expProgress.setValue(cvalue)
 		expCancel = QPushButton()
 		expCancel.setText('Cancel')
 		expCancel.clicked.connect(self.cancelExp)
-
+		self.addsound = False # that doesn't mean we don't want to add sound, only that it isn't yet time to do it
 		vb = QVBoxLayout()
 		vb.addWidget(self.expProgress)
 		vb.addWidget(expCancel)
 		self.setLayout(vb)
+		self.stage = "init"
 		QTimer.singleShot(100,self.expSlot)
 
 	def expSlot(self):
@@ -497,7 +497,7 @@ class vidExport(QDialog):
 		global audioDuration
 
 		# render and output to file in asap time
-		if not self.expInit:
+		if self.stage == "init":
 			#print("here1")
 			self.startBoard = soundBoard('asap')
 			self.cam = camera(self.ofile,None)
@@ -506,12 +506,11 @@ class vidExport(QDialog):
 			self.frameTime = 0
 			self.frameCount = 20 # not really, but, well, progress
 			self.expProgress.setValue(self.frameCount)
-			self.expInit = True
-			self.moreEvents = True
+			self.stage = 'frames'
 			QTimer.singleShot(50,self.expSlot)
 			return
 
-		if self.moreEvents:
+		if self.stage == 'frames':
 			print("here2")
 			for msg in performance:
 				# !!! need to add some breaks in here to allow update of pbar
@@ -537,12 +536,12 @@ class vidExport(QDialog):
 					self.startBoard.noteOn(msg,self.aTime)
 				elif msg.type == 'note_off':
 					self.startBoard.noteOff(msg)
-			self.moreEvents = False
+			self.stage = 'deadend'
 			QTimer.singleShot(50,self.expSlot)
 			return
 
 		# dead space after all performance Info
-		if not self.moreEvents and not self.allFrames:
+		if self.stage == 'deadend':
 			print("here3")
 			while audioDuration > self.frameTime:
 				#print("gen frame "+str(frameCount -20 ))
@@ -556,14 +555,29 @@ class vidExport(QDialog):
 				if self.frameCount % 100 == 0:
 					break # let the UI update
 			if audioDuration <= self.frameTime:
-				self.allFrames = True
+				self.stage = 'exportsilent'
 			QTimer.singleShot(50,self.expSlot)
 			return
 
-		if self.allFrames:
+		if self.stage == 'exportsilent':
 			# write to file then
 			#print("here 4")
 			self.cam.wrap()
+			self.expProgress.setValue(self.frameCount+20)
+			self.stage = 'addsound'
+			QTimer.singleShot(50,self.expSlot)
+			return
+
+		if self.stage == 'addsound':
+			# load the video
+			video_clip = VideoFileClip(self.ofile, audio = False)
+			# load the audio
+			audio_clip = AudioFileClip(audioFile)
+			# use the volume factor to increase/decrease volume
+			audio_clip = audio_clip.volumex(1) # basically does nothing, but 0.9 makes quieter, 1.1 makes louder
+			final_clip = video_clip.set_audio(audio_clip)
+			final_clip.write_videofile("xxx_tmp.mp4", audio_codec='aac')
+			shutil.move("xxx_tmp.mp4",self.ofile)
 			self.expProgress.setValue(self.totalSteps)
 			time.sleep(0.5)
 			self.close()
@@ -2301,6 +2315,7 @@ class AmenicMain(QMainWindow):
 			return
 		exportToMp4 = vidExport(mp4out)
 		exportToMp4.exec_()
+
 
 	def sPAs(self):
 		self.saveProj(True)
