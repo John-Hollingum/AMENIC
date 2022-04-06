@@ -10,7 +10,7 @@ port = mido.open_output('Steinberg UR22mkII  Port1')
 #		print(msg)
 
 #mf = MidiFile('/users/johnhollingum/Documents/AMENIC/ticktest.mid')
-mf = MidiFile('/users/johnhollingum/Documents/AMENIC/t16.mid')
+mf = MidiFile('/users/johnhollingum/Documents/AMENIC/mid16.mid')
 print("ticks per beat : "+str(mf.ticks_per_beat))
 
 for msg in mf:
@@ -27,6 +27,7 @@ for i, track in enumerate(mf.tracks):
 	msgTypes = []
 	for msg in track:
 		#print(str(type(msg)))
+		print(str(msg))
 		if msgTypes.count(msg.type) == 0:
 			msgTypes.append(msg.type)
 		if str(type(msg)) != "<class 'mido.midifiles.meta.MetaMessage'>":

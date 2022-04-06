@@ -1,0 +1,144 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2513
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;\f1\fnil\fcharset0 Menlo-Regular;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\csgray\c0;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww10800\viewh14000\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 0.5(-)There is some sort of latency meaning that any recorded sequence is about a beat and a half late, but apparently at the right tempo\
+\
+1 (+) loading and playing the \'91imported midi\'92 project, where the midi was generated in Musescore plays back as expected\
+\
+2(+)Playing back the project which is as above, but with an added \'91recorded\'92 layer doesn\'92t look that screamingly wrong tbh,\
+\
+3(.)Recording only shows \'91rest\'92 images after non-rest images have been shown. This is a pretty low priority as it could be considered a feature and will certainly be affected by any mono-poly switch \
+\
+4(-)The \'91play\'92 doesn\'92t obviously \'91auto stop\'92 and the \'91stop\'92 button remains active after all video and audio activity has stopped.\
+\
+5(-)Currently, sound playback uses vlc and garbles the first second of playback\
+\
+6(-)Currently, it appears that recording just isn\'92t working\
+\
+ A recent run the python runtime system multiprocessing resource_tracker threw this warning:\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f1\fs22 \cf2 \CocoaLigature0 UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \CocoaLigature1 7(-)need to work out the conditions under which this happens\
+\
+When pygame was installed (but not referenced) I saw segfaults announced like this:\
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f1\fs22 \cf2 \CocoaLigature0 Fatal Python error: pygame_parachute: (pygame parachute) Segmentation Fault\
+Python runtime state: initialized\
+\
+This was occuring around the transportStop function \
+\
+When pygame was uninstalled, still saw segfaults, leading me to think that they were not caused by pygame, but that pygame merely reported them more verbosely:\
+  Successfully uninstalled pygame-2.1.2\
+Johns-iMac-2:AMENIC johnhollingum$ py amenic.py \
+Segmentation fault: 11\
+\
+I don\'92t recall the conditions where the segfault happened, but it was probably at \'92stop\'92 time\
+8(-) need to reproduce \
+\
+9(+)Currently the \'91imported midi\'92 project exports, with sound, exactly as expected to mp4\
+\
+10(-)Import audio. Select import audio again, but cancel. At least *appears* to lose the original imported audio\
+
+\f0\fs24 \cf0 \CocoaLigature1 \
+Priorities (6) (7,8) (5) (0.5)\
+\
+Ok so right off, with no code changes, things are behaving differently from yesterday. The record process looks as though it\'92s working, but I\'92m getting a segfault on stop.\
+\
+Got consistency now. Import audio, import voice, assign voice to ch0 and set to listen. Press play and hit some keys, have the expected effect. Hit stop: segfault\
+\
+Playing the basic ticktest project, can play and stop with no issues.\
+\
+\
+What happens at stop time when you have a listen channel Vs when you don\'92t?? \
+\
+Segfaults in makeChannelTimelines \
+\
+Loading a two-channel proj, it negotiates makeChannelTimelines OK.\
+\
+It\'92s also OK when recording an extra layer on a single-layer proj. It\'92s got to be some initialization that hasn\'92t happened (??)\
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 There\'92s an issue inside drawline. When it works, chanPixmaps is recognised as size 0 and initialized correctly. When it segfaults, the if len(chanPimaps) == 0 test fails. Maybe chanPixmaps is None or undefined?\
+\
+Bad alternative initialization of chanPixmaps \
+\
+6,7,8 fixed \
+\
+(5) problems with vlc look difficult to fix. Objections to pygame (which doesn\'92t have the problem were a) the code isn\'92t neat b) it can\'92t be stopped c) it causes segfaults. The last we know isn\'92t true, so the main objectioin is \'91can\'92t stop it\'92. Obvious thing would be to run it in a forked process that can be killed. Is that a pythonic way of doing it?\
+\
+5 fixed \
+\
+0.5 the MixerLag variable seems to work. what is the best way to calibrate it I\'92m not sure\
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 Y direction in chan pixmaps is counter-intuitive. and line too thick\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 Clear doesn\'92t clear the old events from the midifile I think it *does* but the pixmap wasn\'92t cleared \
+\
+I\'92m also seeing an oddity in the timeline as it appears to be showing the gap between notes or something like that \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
+In record mixerLag seems \'85 ok but I\'92m missing the last note \
+\
+Managed to make the last note work by putting a big time delta on the last note off. This makes 0 sense to me. event times were shifted by one event in mp4out and playback (and timeline gen)\
+** time is how long after the last event this event happens **\
+\
+if midi is imported with no voice assigned, crashes at play time \
+Caused by attempting to render layers with no voice. Introduced layer mute control which is automatically applied if there is no voice on it, and can manually be applied to any layer with a voice and midi data. \
+\
+There are issues when there is no playable layer. Need a better playability check that stops playslot from being invoked\
+\
+All ok, but when proj file loaded, live chan is muted. when unmuted;\
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f1\fs22 \cf2 \CocoaLigature0 File "/Users/johnhollingum/Documents/AMENIC/amenic.py", line 888, in addNoteOff\
+    self.board[msg.channel].pop(msg.note)\
+KeyError: 0\
+Abort trap: 6\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 \CocoaLigature1  \
+need to check channel no maybe? Same with \'91fromscratch\'92 and \'91imported midi\'92 projs. Works OK if mute flag NOT removed.\
+\
+1) load proj \'85  into layers \'85 unmute \'85 play \'85 ok\
+\
+2) load proj .. play \'85 plays only first event then continues running but with no events going out \
+\
+3) as previous(2), then stop, into layers, unmute save, play, OK \
+\
+4) load proj, into layers, no change, save, play, first event only, like 2 \
+\
+Can\'92t reproduce crash?? Removed debug line which afaik was the only change, still as above.\
+\
+So only bugs are:\
+\
+Playable channel loads muted (but unmutable) \
+\
+Muting doesn\'92t prevent send of first event \
+\
+Cancel on export voice crashes\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+}

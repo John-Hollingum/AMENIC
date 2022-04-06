@@ -13,8 +13,14 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import QPixmap, QPainter, QPen, QPalette, QIcon, QColor, QStandardItemModel, QStandardItem, QGuiApplication
 import sys
-#import vlc
+#import vlc #-- Attempted to use VLC for audio playback. It totally garbles the first second or so
 from pygame import mixer
+#import playsound # playsound blocks. Let's try it with a fork. and it didn't work at all until I installed PyObjC
+# let's see if pyobjc helps pygame before trying a forked process
+# ok, so it seems that with pyobjc vlc is the best after all!
+# kind of. now getting pygame segfaults even though pygame not loaded. de-install pygame, now a) vlc garbling again
+# still getting segfaults, but they don't mention pygame any more. Makes me thing that pygame wasn't the source of
+# segfaults, it was just its segfault handler was trapping them.
 import os, subprocess
 import shutil
 from mutagen.mp3 import MP3
@@ -23,8 +29,10 @@ from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 wavePixmap = None
 chanPixmaps = []
+chanMuted = []
+perfPlayable = False
 amenicDir = "/Users/johnhollingum/Documents/AMENIC"
-loglevel = 2
+loglevel = 3
 orchPath = "./"
 orchName = "Untitled"
 oExtn = 'orc'
@@ -40,9 +48,9 @@ tWidth = 960
 tHeight = 540
 mainWindowX = tWidth + 24
 mainWindowY = 560
-layerWindowX = 970
-#fRate = 24
-fRate = 12
+layerWindowX = 1020
+fRate = 24
+#fRate = 12
 ecount=0
 emptyImg = None
 blackImg = None
@@ -110,6 +118,7 @@ def timeLineGeometry():
 	global chanNumberX
 	global voiceNameX
 	global listenCheckX
+	global muteCheckX
 	global clearBtnX
 	global timeLineWidth
 	global timeLineHeight
@@ -118,8 +127,9 @@ def timeLineGeometry():
 	chanNumberX = 55
 	voiceNameX = 180
 	listenCheckX = 50
+	muteCheckX = 50
 	clearBtnX =70
-	timeLineWidth = tableWidth - ( chanNumberX + voiceNameX + clearBtnX + listenCheckX)
+	timeLineWidth = tableWidth - ( chanNumberX + voiceNameX + clearBtnX + listenCheckX + muteCheckX)
 	timeLineHeight = 28
 
 def overlay_transparent(background, overlay, x, y):
@@ -165,7 +175,7 @@ def overlay_transparent(background, overlay, x, y):
 	mask = overlay[..., 3:] / 255.0  # keep only the transparency channel
 
 	# my added debug
-	if loglevel == 3:
+	if False:
 		print('background ')
 		print(background.shape)
 		print('mask ')
@@ -219,6 +229,11 @@ def to_name(nn):
 	nis = nn % 12
 	nname = nnt[nis]
 	return nname + " " + str(on)
+
+def logit(ll,mymess):
+	global loglevel
+	if loglevel >= ll:
+		print(mymess)
 
 def mess(mymess):
 	msg = QMessageBox()
@@ -289,7 +304,7 @@ def timelineXMap(t):
 
 def timelineYMap(n):
 	global tlYscale
-	return int((n - 21) * tlYscale)
+	return timeLineHeight - int((n - 21) * tlYscale)
 
 def drawline(snap,msg,aTime):
 	global timeLineWidth
@@ -302,22 +317,27 @@ def drawline(snap,msg,aTime):
 	# there's no particular need to integrate the images into cvmap, rather put
 	# them in a specialist table which is incorporated into data model in cvedit
 	# in a similar way to the wavePixmap
+	#logit(3,"In Drawline")
 	if len(chanPixmaps) == 0:
+		#logit(3,"initializing pixmaps")
 		for i in range(0,16):
 			# add a black image and a 'clean' flag
 			chanPixmaps.append([ blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy(),True])
+
+	#logit(3,"Pixmaps initialized")
 	chan = msg.channel
 	for ch in snap.keys():
 		if ch == chan:
 			for n in snap[ch].keys():
 				if n == msg.note:
+					#print("In Drawline, note on at "+str(snap[ch][n][0]) + " note off at "+ str(aTime))
 					x1 = timelineXMap(snap[ch][n][0])
 					y1 = timelineYMap(n)
 					x2 = timelineXMap(aTime)
 					y2 = y1
 					p = QPainter(chanPixmaps[chan][0])
 					chanPixmaps[chan][1] = False
-					p.setPen(QPen( QColor('#ffffff'), 5, Qt.SolidLine, Qt.FlatCap))
+					p.setPen(QPen( QColor('#ffffff'), 2, Qt.SolidLine, Qt.FlatCap))
 					p.drawLine(x1, y1, x2, y2)
 					p.end()
 
@@ -336,15 +356,18 @@ def makeChannelTimelines(mf):
 	global tlYscale
 	# this is going to have to poke the generated images into an appropriate
 	# timeline image
+	#logit(3,"in makeChannelTimelines")
 	tlXScale = timeLineWidth / audioDuration
 	tlYscale = timeLineHeight / 88 # but subtract 21 before applying
 
 	startBoard = soundBoard('asap')
+	#logit(3,"made soundboard for makeChannelTimelines")
 	aTime = 0
 	frameTime = 0
-	#mess("in makeChannelTimelines")
+	#logit(3,"reading through memory 'midifile' for msg")
 	for msg in mf:
 		aTime += msg.time
+		#logit(3,str(aTime))
 		gotBoard = False
 		snap = startBoard.currentNotes()
 		noteEnd = False
@@ -355,9 +378,6 @@ def makeChannelTimelines(mf):
 		elif msg.type == 'note_off':
 			drawline(snap,msg,aTime)
 			startBoard.noteOff(msg)
-	#for i in range(0,16):
-	#	if not chanPixmaps[i][1]:
-	#		mess(str(i)+ " isn't clean")
 
 class voiceExport(QDialog):
 	def __init__(self):
@@ -377,7 +397,7 @@ class voiceExport(QDialog):
 		self.accept()
 
 	def cancelExp(self):
-		self.selVoice = None
+		self.selVoice = "<none>"
 		self.reject()
 
 	def initUI(self):
@@ -495,6 +515,7 @@ class vidExport(QDialog):
 		global fRate
 		global performance
 		global audioDuration
+		global chanMuted
 
 		# render and output to file in asap time
 		if self.stage == "init":
@@ -533,9 +554,11 @@ class vidExport(QDialog):
 				#	print(" aTime "+str(self.aTime)+" frame time "+str(self.frameTime)+" velocity "+str(msg.velocity))
 
 				if msg.type == 'note_on':
-					self.startBoard.noteOn(msg,self.aTime)
+					if not chanMuted[msg.channel]:
+						self.startBoard.noteOn(msg,self.aTime)
 				elif msg.type == 'note_off':
-					self.startBoard.noteOff(msg)
+					if not chanMuted[msg.channel]:
+						self.startBoard.noteOff(msg)
 			self.stage = 'deadend'
 			QTimer.singleShot(50,self.expSlot)
 			return
@@ -853,7 +876,7 @@ class soundBoard():
 		if msg.channel not in self.board.keys():
 			self.board[msg.channel] = {}
 		#print("[Board] chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(t) + " velocity "+ str(msg.velocity))
-		#print("chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(msg.time) + " velocity "+ str(msg.velocity)+chr(7))
+		#print("chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(msg.time) + " velocity "+ str(msg.velocity))
 		if msg.velocity ==0: # It's effectively an old skule note off
 			self.board[msg.channel].pop(msg.note)
 		else:  # it's a genuine note on
@@ -932,27 +955,38 @@ class player():
 	def playNext(self,sendNow):
 		global board
 		global bpm
+		global chanMuted
 
+		#print("in playnext ",end= ' ')
+		#print(str(sendNow))
 		self.stopIt = False
 		if str(sendNow) != "None":
 			# print("[player] "+str(sendNow))
 			if sendNow.type == 'note_on':
 				# print("[PlayNext a] sending note_on "+str(sendNow.note))
-				board.noteOn(sendNow)
+				if not chanMuted[sendNow.channel]:
+					board.noteOn(sendNow)
 			elif sendNow.type == 'note_off':
 				# print("[PlayNext a] sending note_off "+str(sendNow.note))
-				board.noteOff(sendNow)
+				if not chanMuted[sendNow.channel]:
+					board.noteOff(sendNow)
+			nextSendTime = sendNow.time
+		else:
+			nextSendTime = 0
 
 		if len(self.msgList) > 0:
 			msg = self.msgList.pop(0)
 			while msg.time == 0:
 				if msg.type == 'note_on':
-					board.noteOn(msg)
+					if not chanMuted[msg.channel]:
+						board.noteOn(msg)
 				elif msg.type == 'note_off':
-					board.noteOff(msg)
+					if not chanMuted[msg.channel]:
+						board.noteOff(msg)
 				elif msg.type == 'set_tempo':
 					newTiming(msg.tempo)
 					self.mw.bpmShow.setText(str(bpm))
+				nextSendTime = msg.time
 				if len(self.msgList) ==0:
 					msg = None
 					break
@@ -960,7 +994,6 @@ class player():
 					msg = self.msgList.pop(0)
 		else:
 			msg = None
-
 		# the msg we have now is not 'send now'
 		return msg
 
@@ -1023,6 +1056,13 @@ class camera():
 		image = None
 		#print("imgcache keys",end=' ')
 		#print(self.imgCache.keys())
+		if not ch in self.imgCache:
+			print("Playing channel is "+str(ch))
+			print("imgcache keys",end=' ')
+			print(self.imgCache.keys())
+			print("mutes",end=' ')
+			print(str(chanMuted))
+
 		if n in self.imgCache[ch]: # if there's a direct map use it (Includes Rest)
 			# print("setting specific note image")
 			image = self.imgCache[ch][n]
@@ -1101,7 +1141,8 @@ class camera():
 	def wrap(self):
 		self.writer.release()
 
-	def snapExposure(self,snap,aTime):  # for non-realtime use
+	def snapExposure(self,snap,aTime):
+		# for non-realtime use when exporting to mp4
 		if snap == None:
 			self.writer.write(blackImg)
 			return
@@ -1115,8 +1156,7 @@ class camera():
 	def exposure(self):
 		global board
 		global ecount
-		# construct image from myBoard, then, depending on mode, show in myTheatre or
-		# ?and? write to film.
+		# construct image from myBoard, then show in myTheatre
 		board.lockBoard()
 		snap = board.currentNotes()
 		board.unLockBoard()
@@ -1131,7 +1171,7 @@ class camera():
 
 # the data model for the layers table which associates voices with midi channels or live performance data
 class cvmModel(QAbstractTableModel):
-	header_labels = ['Layer', 'Voice', "Listen", "Clear", "Timeline" ]
+	header_labels = ['Layer', 'Voice', "Listen", "Mute", "Clear", "Timeline" ]
 
 	def __init__(self, data):
 		super().__init__()
@@ -1590,6 +1630,20 @@ class CVMapEdit(QDialog):
 		self.newCVMap = []
 		self.mw = mainWind
 
+	def cbValues(self,idx,vname):
+		global chanMuted
+		#mess("in cbvalues vname = "+vname)
+		gotVoice = ( vname != '<none>')
+		clean = chanPixmaps[idx -1][1]
+		listenWidget = self.cvm.indexWidget(self.model.index(idx,2))
+		listenWidget.setEnabled(clean and gotVoice)
+		if not (clean and gotVoice):
+			listenWidget.setChecked(False)
+		muteWidget = self.cvm.indexWidget(self.model.index(idx,3))
+		muteWidget.setChecked(not gotVoice)
+		chanMuted[idx - 1 ] = not gotVoice
+		muteWidget.setEnabled(gotVoice and (not clean))
+
 	def checkNew(self,idx):
 		global voices
 		global CVMap
@@ -1606,10 +1660,13 @@ class CVMapEdit(QDialog):
 				w.addItem(v.vdata["name"]) # no doubt causes a kinda recursive call here
 				i = w.findText(v.vdata["name"])
 				w.setCurrentIndex(i)
-
+				# check if the listen checkbox should now be active
+				self.cbValues(idx)
 			else:
 				i = w.findText("<none>")
 				w.setCurrentIndex(i)
+		# check if the listen checkbox should now be active
+		self.cbValues(idx,w.currentText())
 
 	def toggleChecked(self,idx):
 		global listenChannel
@@ -1641,10 +1698,15 @@ class CVMapEdit(QDialog):
 			self.mw.recLED.setPixmap(redLEDOff)
 			listenChannel = None
 
+	def toggleMute(self,idx):
+		global chanMuted
+
+		w = self.cvm.indexWidget(self.model.index(idx, 3))
+		chanMuted[idx - 1] = w.checkState()
+
 	def clearChan(self,idx):
 		global performance
 
-		# mess("here we'd put in code to clear channel "+str(idx-1))
 		trackName = "forChan"+str(idx -1)
 		trackIndex = 0
 		found = False
@@ -1657,10 +1719,10 @@ class CVMapEdit(QDialog):
 		if not found:
 			err("can't find index for track named '"+trackName+"'")
 		else:
-			#mess("here we'd delete the track with the index "+str(trackIndex))
 			del performance.tracks[toDelete]
 			tl = self.cvm.indexWidget(self.model.index(idx,4))
 			tl.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
+			chanPixmaps[idx-1][0] = blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy()
 			chanPixmaps[idx -1][1] = True
 			cb = self.cvm.indexWidget(self.model.index(idx,3))
 			cb.setEnabled(False)
@@ -1684,20 +1746,24 @@ class CVMapEdit(QDialog):
 
 			# because of the presence of the sound row, the rows in the internal cvmap are
 			# 1 out of sync with the index of the model.
-			if CVMap[idx -1][1] != None:
-				i = selVoiceCombo.findText(CVMap[idx -1][1])
-			else:
+			if CVMap[idx -1][1] == "<none>" or CVMap[idx -1][1] == None:
+				gotVoice = False
 				i = selVoiceCombo.findText("<none>")
+			else:
+				gotVoice = True
+				i = selVoiceCombo.findText(CVMap[idx -1][1])
+
 			selVoiceCombo.setCurrentIndex(i)
 			selVoiceCombo.currentTextChanged.connect(partial(self.checkNew,idx))
 			self.cvm.setIndexWidget(self.model.index(idx, 1), selVoiceCombo)
 
-		if len(chanPixmaps) >0:
-			canListen = chanPixmaps[idx -1][1]
-		else:
-			canListen = True
-
 		if idx > 0:
+			if len(chanPixmaps) >0:
+				clean = chanPixmaps[idx -1][1]
+			else:
+				# not sure this can happen
+				clean = True
+			canListen =  clean and gotVoice
 			listening = QCheckBox()
 			listening.setTristate(False)
 			listening.setChecked(False)
@@ -1705,29 +1771,38 @@ class CVMapEdit(QDialog):
 			listening.stateChanged.connect(partial(self.toggleChecked,idx))
 			listening.setEnabled(canListen)
 
-
 			clearBtn = QPushButton()
 			clearBtn.setText("Clear")
 			clearBtn.clicked.connect(partial(self.clearChan,idx))
-			clearBtn.setEnabled(not canListen)
-			self.cvm.setIndexWidget(self.model.index(idx,3),clearBtn)
+			clearBtn.setEnabled(not clean)
+			self.cvm.setIndexWidget(self.model.index(idx,4),clearBtn)
+
+			# only enabled if not clean and has voice
+			mute = QCheckBox()
+			mute.setTristate(False)
+			mute.setChecked(chanMuted[idx -1])
+			self.cvm.setIndexWidget(self.model.index(idx,3),mute)
+			mute.stateChanged.connect(partial(self.toggleMute,idx))
+			mute.setEnabled((not clean) and gotVoice )
 
 		timeLine = QLabel()
 		if idx ==0:
 			if wavePixmap != None:
 				timeLine.setPixmap(wavePixmap.scaled(timeLineWidth,timeLineHeight,0,1))
-				self.cvm.setIndexWidget(self.model.index(idx,4),timeLine)
+				self.cvm.setIndexWidget(self.model.index(idx,5),timeLine)
 			return
 		if len(chanPixmaps) == 0:
-			return
+			for i in range(0,16):
+				chanPixmaps.append([ blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy(),True])
+
 		if chanPixmaps[idx -1][1]:
 			# it's a clean channel
 			timeLine.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
-			self.cvm.setIndexWidget(self.model.index(idx,4),timeLine)
+			self.cvm.setIndexWidget(self.model.index(idx,5),timeLine)
 		else:
 			# there is an activity pixmap
 			timeLine.setPixmap(chanPixmaps[idx -1][0].scaled(timeLineWidth,timeLineHeight,0,1))
-			self.cvm.setIndexWidget(self.model.index(idx,4),timeLine)
+			self.cvm.setIndexWidget(self.model.index(idx,5),timeLine)
 
 	def initUI(self):
 		global timeLineWidth
@@ -1737,6 +1812,7 @@ class CVMapEdit(QDialog):
 		global chanNumberX
 		global voiceNameX
 		global listenCheckX
+		global muteCheckX
 		global clearBtnX
 		global timeLineWidth
 		global timeLineHeight
@@ -1750,9 +1826,9 @@ class CVMapEdit(QDialog):
 
 		for row in range(0,17):
 			if row == 0:
-				CVPresTable.append(['Sound',"","","",""])
+				CVPresTable.append(['Sound',"","","","",""])
 			else:
-				CVPresTable.append([ row -1, None, "","",""])
+				CVPresTable.append([ row -1, None, "","","",""])
 		self.model = cvmModel(CVPresTable)
 
 		self.cvm.setModel(self.model)
@@ -1763,8 +1839,9 @@ class CVMapEdit(QDialog):
 		self.cvm.setColumnWidth(0,chanNumberX)
 		self.cvm.setColumnWidth(1,voiceNameX)
 		self.cvm.setColumnWidth(2,listenCheckX)
-		self.cvm.setColumnWidth(3,clearBtnX)
-		self.cvm.setColumnWidth(4,timeLineWidth)
+		self.cvm.setColumnWidth(3,muteCheckX)
+		self.cvm.setColumnWidth(4,clearBtnX)
+		self.cvm.setColumnWidth(5,timeLineWidth)
 
 		for idx in range(0, 17):
 			self.comboAdd(idx)
@@ -2188,6 +2265,16 @@ class AmenicMain(QMainWindow):
 		# enough data to generate video
 		self.btnPlay.setEnabled(playable)
 
+	def setPerfPlayable(self,p):
+		global perfPlayable
+
+		perfPlayable = p
+		if not p:
+			self.btnPlay.setText("Play (audio Only)")
+		else:
+			self.btnPlay.setText("Play")
+		#mess("perfPlayable: "+str(perfPlayable))
+
 	def setClean(self,clean):
 		global cleanProj
 		global projName
@@ -2230,6 +2317,9 @@ class AmenicMain(QMainWindow):
 		projName = "Untitled"
 		audioFile = ''
 		performanceFile = ''
+		chanMuted.clear()
+		for i in range(0,16):
+			chanMuted.append(False)
 		self.setGotAudio(False)
 		self.setAudio()
 		self.setWaveform(audioFile)
@@ -2307,6 +2397,7 @@ class AmenicMain(QMainWindow):
 		self.setGotAudio(True)
 		self.setGotProjName(True)
 		checkVidGen(self)
+		self.checkPerfPlayable(True)
 
 	def genVid(self):
 		n = projPath + projName + ".mp4"
@@ -2315,7 +2406,6 @@ class AmenicMain(QMainWindow):
 			return
 		exportToMp4 = vidExport(mp4out)
 		exportToMp4.exec_()
-
 
 	def sPAs(self):
 		self.saveProj(True)
@@ -2360,7 +2450,7 @@ class AmenicMain(QMainWindow):
 		ve = voiceExport()
 		ve.exec_()
 		voiceName = ve.selVoice
-		if ve == None:
+		if voiceName == "<none>":
 			return
 		v = getVoiceByName(voiceName)
 		saveData = json.dumps(jsonAbleVoice(v,voiceName), indent = 1)
@@ -2407,9 +2497,10 @@ class AmenicMain(QMainWindow):
 			self.adShow.setText(f'{audioDuration:.2f}')
 			self.difShow.setText(str(durationInFrames))
 			mixer.init()
-			mixer.music.load("/Users/johnhollingum/Documents/AMENIC/sixteenbars.mp3")
-			self.st = "got audio"
+			mixer.music.load(audioFile)
+			#self.st = "got audio"
 			#self.st = vlc.MediaPlayer("File://"+audioFile)
+
 		else:
 			self.ssFileShow.setText('')
 			self.adShow.setText('')
@@ -2417,6 +2508,7 @@ class AmenicMain(QMainWindow):
 			self.st = None
 			if performance == None:
 				self.setPlayable(False)
+		self.checkPerfPlayable(False)
 
 	def setWaveform(self,audioFile):
 		global wavePixmap
@@ -2464,14 +2556,38 @@ class AmenicMain(QMainWindow):
 			if len(chans) > 1:
 				err('Too complicated: multiple channels per track')
 				return False
+			if len(chans) == 0:
+				continue # no channeled events on this track (?maybe tempo or just empty?)
 			if gotTrackFor.count(chans[0]) != 0:
 				err('Too complicated: multiple tracks with events for channel '+str(chans[0]))
 				return False
 			track.name = "forChan"+str(chans[0])
 
+	def checkPerfPlayable(self,loadTime):
+		global CVMap, chanMuted
+
+		self.setPerfPlayable(False)
+		if len(CVMap) ==0:
+			return
+		if performanceFile == None:
+			return
+		for i in range(0,16):
+			if CVMap[i][1] == None or CVMap[i][1] == "<none>":
+				chanMuted[i] = True
+			else:
+				# at load time we set it to unmuted as we know that will be ok
+				# at all other times we respect the current muted state
+				if loadTime:
+					chanMuted[i] = False
+				if not chanMuted[i]:
+					self.setPerfPlayable(True)
+					return
+
 	def setMidi(self, performanceFile, imported = False):
 		global performance
 		global bpm
+		global CVMap
+		global chanMuted
 
 		if performanceFile != '':
 
@@ -2483,8 +2599,7 @@ class AmenicMain(QMainWindow):
 			midiTiming(performance) # this actually extracts info from the file
 			self.bpmShow.setText(str(bpm))
 			makeChannelTimelines(performance)
-
-			self.setPlayable(True)
+			self.checkPerfPlayable(False)
 		else:
 			self.mpFileShow.setText('')
 			self.bpmShow.setText('')
@@ -2508,14 +2623,15 @@ class AmenicMain(QMainWindow):
 	def playslot(self):
 		# this pushes out the events in the performance in (roughly) the right timing
 		# and maintains the soundBoard with all currently playing notes
-		if self.stopFlag:
-			return
-		nextMess = self.p.playNext(self.lastMess)
-		if str(nextMess) != "None":
-			self.lastMess = nextMess
+
+		mess = self.p.playNext(self.lastMess)
+		if str(mess) != "None":
+			self.lastMess = mess
 			# convert from a float number of seconds to and integer number of milliseconds
-			ms = int(nextMess.time * 1000)
+			ms = int(mess.time * 1000)
 			QTimer.singleShot(ms,self.playslot)
+		elif self.stopFlag:
+			return
 
 	def cameraSlot(self):
 		# the camera takes snaps of the soundboard and renders them
@@ -2566,9 +2682,11 @@ class AmenicMain(QMainWindow):
 			elif msg.type == "note_off":
 				board.noteOff(msg)
 			if True:
-				self.lastPerfMess.time = self.tickDelta()
-				self.track.append(self.lastPerfMess)
-				self.lastPerfMess = msg
+				msg.time = self.tickDelta()
+				#print("putting out event with fixed-up time",end=" ")
+				#print(str(msg))
+				self.track.append(msg)
+				self.lastEventTime = time.time()
 			msg = self.inport.poll()
 		self.startPerfTimer()
 
@@ -2581,6 +2699,7 @@ class AmenicMain(QMainWindow):
 		global board
 		global fRate
 		global performance
+		global perfPlayable
 
 		self.stopFlag = False
 		# this shouldn't happen, but:
@@ -2597,32 +2716,39 @@ class AmenicMain(QMainWindow):
 			self.track.name = "forChan"+str(listenChannel)
 			performance.tracks.append(self.track)
 			self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
-			self.lastEventTime = self.performanceStartTime
+			mixerLag = 0.0
+			self.lastEventTime = self.performanceStartTime + mixerLag
 			self.startPerfTimer()
 
 		if performance != None:
 
 			if len(CVMap)==0:
 				err("No voices assigned to layers. Can't render performance info")
-				return
+				self.setPerfPlayable(False)
+			else:
+				self.checkPerfPlayable(False)
+			if perfPlayable:
+				# create camera
+				board = soundBoard('realtime')
+				self.gateTimerPeriod = int(1000 / fRate)
 
-			# create camera
-			board = soundBoard('realtime')
-			self.gateTimerPeriod = int(1000 / fRate)
+				self.c = camera(None,theatre)
+				#start the camera
+				self.cameraSlot()
 
-			self.c = camera(None,theatre)
-			#start the camera
-			self.cameraSlot()
-
-			self.p = player(performance,self)
-			# start the midi player
-			self.playslot()
+				self.p = player(performance,self)
+				# start the midi player
+				self.playslot()
 		else:
-			msgBox("Audio only, no performance info")
+			self.setPerfPlayable(False)
+
+		if not perfPlayable:
+			warn("Audio only, no voiced performance info")
 
 		if audioFile != '':
 			#self.st.play()
 			mixer.music.play()
+			#playsound.playsound(audioFile)
 			self.btnStop.setEnabled(True)
 
 	def channelMap(self):
@@ -2633,10 +2759,17 @@ class AmenicMain(QMainWindow):
 		self.edComboInit() # new voices may have been added
 		# if an existing populated track has been assigned a voice, this will now be
 		# generatable
+		if len(chanPixmaps) == 0:
+			mess("that'll be the problem")
+			quit()
+		#mess("checking playable ")
+		self.checkPerfPlayable(False)
+		#mess("perfPlayable: "+ str(perfPlayable))
 		for i in range(0,16):
 			if not chanPixmaps[i][1]:
-				if CVMap[i][1] != "<none>":
+				if CVMap[i][1] != None and CVMap[i][1] != "<none>":
 					self.setCanGenVid(True)
+
 
 	def edComboInit(self):
 		self.edCombo.clear()
@@ -2886,14 +3019,23 @@ class AmenicMain(QMainWindow):
 	def transportStop(self):
 		global performance
 
+		#logit(3,"in transportStop")
 		self.stopFlag = True # stops midi listener and camera
-		self.p.stop() # stops midfile player
-		#self.st.stop() # stops audio playback
+		if perfPlayable:
+			self.p.stop() # stops midfile player
+
 		mixer.stop()
+		mixer.quit() # just stop doesn't work. quit leaves it in an unplayable state so:
+		mixer.init()
+		mixer.music.load(audioFile)
 		self.btnStop.setEnabled(False)
 		if listenChannel != None:
+			print("putting out final event with raw time",end=" ")
+			# this value is typically a note_off or a note_on V=0
+			print(str(self.lastPerfMess))
 			self.track.append(self.lastPerfMess)
 			performance.save(amenicDir + "/secmid.apf")
+			#logit(3,"calling makeChannelTimelines")
 			makeChannelTimelines(performance)
 			self.setCanGenVid(True)
 
