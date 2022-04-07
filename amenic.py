@@ -59,6 +59,7 @@ board = None
 performance = None
 audioFile = ''
 listenChannel = None
+totalTicks = 0
 PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble"]
 FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
 yauto = False
@@ -343,9 +344,10 @@ def drawline(snap,msg,aTime):
 
 def checkVidGen(mw):
 	cg = False
-	for i in range(0,16):
-		if not chanPixmaps[i][1]:
-			cg = True
+	if len(chanPixmaps) > 0:
+		for i in range(0,16):
+			if not chanPixmaps[i][1]:
+				cg = True
 	mw.setCanGenVid(cg)
 
 def makeChannelTimelines(mf):
@@ -458,7 +460,10 @@ def internaliseVoice(projVoice,vname):
 
 def jsonAbleVoice(v,vname):
 	jav= dict()
-	jav['imgTable'] = v.vdata['imgTable']
+	jav['imgTable'] = []
+	for iti in v.vdata['imgTable']:
+		jiti = iti.copy()
+		jav['imgTable'].append(jiti)
 	for nm in jav["imgTable"]:
 		idx = 0
 		for x in nm:
@@ -884,8 +889,13 @@ class soundBoard():
 		#print("[board chan 0 contents] "+str(self.board[msg.channel]))
 
 	def addNoteOff(self,msg):
-		#print("[AddNoteOff] removing board["+str(msg.channel)+"]["+str(msg.note)+"]")
-		self.board[msg.channel].pop(msg.note)
+		try:
+			self.board[msg.channel].pop(msg.note)
+		except KeyError:
+			print("KeyError trying to remove board["+str(msg.channel)+"]["+str(msg.note)+"]")
+		except:
+			print("some other weird shit here")
+			quit()
 
 
 	def noteOn(self,msg, absTime = None):
@@ -1037,8 +1047,6 @@ class camera():
 						mess("lookup for voice '"+vname+"' produced no result")
 						quit()
 
-					# $$$ somewhere around here we should be doing some of the requests
-					# for caching calculated scaling factors associated with non-fixed paths
 					#print("mapindex "+str(mapIndex))
 					self.pathCache[mapIndex] = dict()
 					self.pathCache[mapIndex]['opacity'] = voice.vdata['opacity']
@@ -1050,8 +1058,8 @@ class camera():
 					self.imgCache[mapIndex] = dict()
 					# $$$ This gives an index error if the voices have been edited in this session
 					for i in voice.vdata["imgTable"]:
-						#print("mi = "+str(mapIndex)+" note = "+ str(i[0]))
-						self.imgCache[mapIndex][i[0]]= i[2] # cache[ch][note]= image
+						#print("mapIndex = "+str(mapIndex)+" note = "+ str(i[0]))
+						self.imgCache[mapIndex][i[0]] = i[2] # cache[ch][note]= image
 
 		image = None
 		#print("imgcache keys",end=' ')
@@ -1661,7 +1669,7 @@ class CVMapEdit(QDialog):
 				i = w.findText(v.vdata["name"])
 				w.setCurrentIndex(i)
 				# check if the listen checkbox should now be active
-				self.cbValues(idx)
+				self.cbValues(idx,v.vdata["name"])
 			else:
 				i = w.findText("<none>")
 				w.setCurrentIndex(i)
@@ -1720,7 +1728,7 @@ class CVMapEdit(QDialog):
 			err("can't find index for track named '"+trackName+"'")
 		else:
 			del performance.tracks[toDelete]
-			tl = self.cvm.indexWidget(self.model.index(idx,4))
+			tl = self.cvm.indexWidget(self.model.index(idx,5))
 			tl.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
 			chanPixmaps[idx-1][0] = blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy()
 			chanPixmaps[idx -1][1] = True
@@ -1977,11 +1985,14 @@ class vEditD(QDialog):
 
 		# set up widgets
 		self.nameLabel = QLabel('Name')
-		self.nameEdit = QLineEdit(self)
+		self.nameEdit = QLineEdit()
 		if not self.new:
 			self.nameEdit.setEnabled(False)
 			self.btnCname = QPushButton("Change")
 			self.btnCname.clicked.connect(self.chName)
+		else:
+			self.nameEdit.setEnabled(True)
+			self.nameEdit.setEchoMode(QLineEdit.Normal)
 
 		self.nameEdit.setText(v.vdata["name"])
 		self.nameEdit.textChanged.connect(self.maybeActiveSave)
@@ -2200,8 +2211,10 @@ class vEditD(QDialog):
 		for idx in range(0, len(self.model._data)):
 			if self.model._data[idx][3] != None and self.model._data[idx][3] != '':
 				# mess("found "+ self.model._data[idx][3]+" in note map")
-
-				image = QPixmap(self.model._data[idx][3])
+				if iimf == 'c':
+					image = cv2.imread(self.model._data[idx][3],cv2.IMREAD_COLOR)
+				else:
+					image = QPixmap(self.model._data[idx][3])
 				# put cached image into table
 				self.myv.vdata["imgTable"].append([ self.model._data[idx][0], self.model._data[idx][3],image])
 		self.accept()
@@ -2245,6 +2258,9 @@ class AmenicMain(QMainWindow):
 		self.savePAsAct.setEnabled(gotAudio)
 		self.impVAct.setEnabled(gotAudio)
 		self.impMAct.setEnabled(gotAudio)
+		self.nVoiceBtn.setEnabled(gotAudio)
+		self.edCombo.setEnabled(gotAudio)
+		self.cMapBtn.setEnabled(gotAudio)
 
 	def setGotVoices(self,gotVoices):
 		self.expVAct.setEnabled(gotVoices)
@@ -2655,16 +2671,23 @@ class AmenicMain(QMainWindow):
 	def tickDelta(self):
 		global performance
 		global tickDuration
+		global totalTicks
+		global lastMsgTime
 
 		oldEventTime = self.lastEventTime
 		self.lastEventTime = time.time()
-		return int((time.time() - oldEventTime ) * 1000000/ tickDuration )
+		lastMsgTime = self.lastEventTime
+		deltaTicks = int((time.time() - oldEventTime ) * 1000000/ tickDuration )
+		totalTicks += deltaTicks
+		return deltaTicks
 
 	def checkPerfSlot(self):
 		global board
 		global listenChannel
 
+
 		self.livePerfTimer.stop()
+
 		if self.stopFlag:
 			return
 		msg = self.inport.poll()
@@ -2716,8 +2739,10 @@ class AmenicMain(QMainWindow):
 			self.track.name = "forChan"+str(listenChannel)
 			performance.tracks.append(self.track)
 			self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
-			mixerLag = 0.0
-			self.lastEventTime = self.performanceStartTime + mixerLag
+			mixerLag = 0.16
+			self.firstEventTime = self.performanceStartTime + mixerLag
+			self.lastEventTime = self.firstEventTime
+			totalTicks = 0
 			self.startPerfTimer()
 
 		if performance != None:
@@ -2868,14 +2893,17 @@ class AmenicMain(QMainWindow):
 
 		self.cMapBtn = QPushButton("Layers")
 		self.cMapBtn.clicked.connect(self.channelMap)
+		self.cMapBtn.setEnabled(False)
 
 		self.nVoiceBtn = QPushButton("New Voice")
 		self.nVoiceBtn.clicked.connect(self.newVoice)
+		self.nVoiceBtn.setEnabled(False)
 
 		edLabel = QLabel('&Edit Voice',self)
 		self.edCombo = QComboBox(self)
 		self.edComboInit()
 		self.edCombo.currentIndexChanged.connect(self.edSelChg)
+		self.edCombo.setEnabled(False)
 
 		self.dirtyCheck = QCheckBox()
 		self.dirtyCheck.setTristate(False)
@@ -3018,11 +3046,16 @@ class AmenicMain(QMainWindow):
 
 	def transportStop(self):
 		global performance
+		global tickDuration
+		global totalTicks
+		global lastMsgTime
 
 		#logit(3,"in transportStop")
 		self.stopFlag = True # stops midi listener and camera
 		if perfPlayable:
 			self.p.stop() # stops midfile player
+			print("according to tickCount, last midi message was at "+str(totalTicks * tickDuration / 1000000 ))
+			print("according to rtc, it was at "+str(lastMsgTime-self.firstEventTime))
 
 		mixer.stop()
 		mixer.quit() # just stop doesn't work. quit leaves it in an unplayable state so:

@@ -10,7 +10,7 @@ port = mido.open_output('Steinberg UR22mkII  Port1')
 #		print(msg)
 
 #mf = MidiFile('/users/johnhollingum/Documents/AMENIC/ticktest.mid')
-mf = MidiFile('/users/johnhollingum/Documents/AMENIC/mid16.mid')
+mf = MidiFile('/users/johnhollingum/Documents/AMENIC/sixtyfourrecorded.apf')
 print("ticks per beat : "+str(mf.ticks_per_beat))
 
 for msg in mf:
@@ -18,16 +18,22 @@ for msg in mf:
 		print(msg)
 		print("bpm = "+str(60000000/msg.tempo))
 		bd = msg.tempo / 1000000 # convert to seconds
+		print("bd = "+str(bd))
 		print("beat duration = "+str(msg.tempo)+ " microseconds")
-		print("tick duration = "+ str(msg.tempo/mf.ticks_per_beat)+" microseconds")
+		td = msg.tempo/mf.ticks_per_beat
+		print("tick duration = "+ str(td)+" microseconds")
 
+aTime = 0
 for i, track in enumerate(mf.tracks):
 	print('Track {}: {}'.format(i, track.name))
 	chans = []
 	msgTypes = []
 	for msg in track:
 		#print(str(type(msg)))
-		print(str(msg))
+		aTime += msg.time * td
+		secs = aTime / 1000000
+		btime = secs / bd
+		print(str(msg)+ " at "+str(secs)+"s, beat no "+str(btime))
 		if msgTypes.count(msg.type) == 0:
 			msgTypes.append(msg.type)
 		if str(type(msg)) != "<class 'mido.midifiles.meta.MetaMessage'>":

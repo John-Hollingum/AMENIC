@@ -130,10 +130,46 @@ Muting doesn\'92t prevent send of first event \
 \
 Cancel on export voice crashes\
 \
+###\
+\
+Make 64 bar audio\
+programatically analyse recorded file\
+Check initial cueing and scaling \
+Check timing on overdubs \
+\
+After successful record and save, play failed like below. Reloaded project played fine \
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f1\fs22 \cf2 \CocoaLigature0   File "/Users/johnhollingum/Documents/AMENIC/amenic.py", line 2642, in cameraSlot\
+    self.c.exposure()\
+  File "/Users/johnhollingum/Documents/AMENIC/amenic.py", line 1169, in exposure\
+    layers.append(self.render(ch,snap[ch]))\
+  File "/Users/johnhollingum/Documents/AMENIC/amenic.py", line 1126, in render\
+    l = self.layerFor(ch,n,nv[n],aTime)\
+  File "/Users/johnhollingum/Documents/AMENIC/amenic.py", line 1054, in layerFor\
+    self.imgCache[mapIndex][i[0]]= i[2] # cache[ch][note]= image\
+IndexError: list index out of range\
+Abort trap: 6\
+\
+The save is the cause of this error. In order to make the imageTable jsonable, it rips the actual image out of the table, leaving only the filename. I guess at save time we need to make a copy of the image table and rip the image out of the copy then json it.\
+\
+This error would occur with voice export too. Need to put a copy into jsonablevoice\
+\
+Cueing appears late
+\f0\fs24 \cf0 \CocoaLigature1 \
+\
+with mixerlag of 0.16 seconds, initial cueing appears very good, but after 64 bars, my note_ons are consistently about 0.3s early \
+\
+Second test looks OK, according to accumulated ticks vs realtime calc, the last event was about 0.07s early. Maybe we need to go to 128 bars. But that 64 bar test was 2m14s so I think we\'92re OK to do a short demo. Around 0.7 early seems to be near the mark. Overdub track on existing recording seems to be quite late cued. I guess it\'92s because of the latency of starting up the midifile, but that should be measurable. Looks like a \'91playback artefact\'92 (at playback time, not record time). Seems ok in mpeg export. Maybe reduce the playback framerate.\
 \
 \
 \
 \
+\
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
 \
 \
 \
