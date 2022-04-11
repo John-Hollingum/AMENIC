@@ -25,7 +25,15 @@ import os, subprocess
 import shutil
 from mutagen.mp3 import MP3
 import re
-from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
+if len(sys.argv) == 2:
+	if sys.argv[1] != 'e':
+		mode = 'export'
+	else:
+		mode = 'edit'
+else:
+	mode = 'export'
+if mode == 'export':
+	from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
 
 wavePixmap = None
 chanPixmaps = []
@@ -217,8 +225,8 @@ def overlaySzOpAt(background,overlay,xsize,ysize,opacity,xpos,ypos):
 		comb1 = overlay_transparent(bg,overlay,xpos,ypos)
 
 	if opacity < 1:
-		alpha =opacity
-		beta = 1 - opacity
+		alpha = 1 - opacity
+		beta = opacity
 		combined = cv2.addWeighted(background,alpha,comb1,beta,0.0)
 	else:
 		combined = comb1
@@ -268,7 +276,7 @@ def getVoiceByName(vName):
 def populateVoices(vcb,withAdd):
 	vcb.clear()
 	vcb.addItem("<none>")
-	if withAdd:
+	if withAdd and ( mode == 'edit'):
 		vcb.addItem("+Add New")
 	vc =0
 	for v in voices:
@@ -344,10 +352,11 @@ def drawline(snap,msg,aTime):
 
 def checkVidGen(mw):
 	cg = False
-	if len(chanPixmaps) > 0:
-		for i in range(0,16):
-			if not chanPixmaps[i][1]:
-				cg = True
+	if mode == "export":
+		if len(chanPixmaps) > 0:
+			for i in range(0,16):
+				if not chanPixmaps[i][1]:
+					cg = True
 	mw.setCanGenVid(cg)
 
 def makeChannelTimelines(mf):
@@ -758,12 +767,17 @@ class ipath():
 			return self.present(self.data["usedfor"],val)
 
 		if aTime == None:
+			#print('atime 1 ontime = '+str(onTime),end=' ')
 			e = time.time() - onTime
 		else:
+			#print('atime 1',end=' ')
 			e = aTime - onTime
 
 		if self.data['ptype'] == "sweep":
 			val = e * self.data['scaling'] + self.data['omin']
+			if val > self.data['omax']:
+				val = self.data['omax']
+			#print("e ="+str(e)+' Scaling '+str(self.data['scaling'])+" omin "+str(self.data['omin'])+' val '+str(val))
 			return self.present(self.data["usedfor"],val)
 
 		# like sweep, but initial value comes from velocity and falls
@@ -784,6 +798,8 @@ class ipath():
 def cvLayers(layers):
 	baseImg = blackImg.copy()
 	for l in layers:
+		if l == None:
+			continue
 		if l['xsize'] < 0: # independent x and y
 			ys = l['ysize']
 			xs = int(l['xsize'] * -1)
@@ -794,6 +810,7 @@ def cvLayers(layers):
 			# retain AR based on x size
 			ys = -1
 			xs = l['xsize']
+		#print("overlaying at opacity "+str(l['opacity']) )
 		baseImg = overlaySzOpAt(baseImg,l['img'],xs,ys,l['opacity'],l['xpos'],l['ypos'])
 	return baseImg
 
@@ -883,6 +900,7 @@ class soundBoard():
 		#print("[Board] chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(t) + " velocity "+ str(msg.velocity))
 		#print("chan "+str(msg.channel)+" note "+str(msg.note)+ " time " + str(msg.time) + " velocity "+ str(msg.velocity))
 		if msg.velocity ==0: # It's effectively an old skule note off
+			#print("removing note "+str(msg.note)+" in response to note on v0")
 			self.board[msg.channel].pop(msg.note)
 		else:  # it's a genuine note on
 			self.board[msg.channel][msg.note] = [ t,msg.velocity]
@@ -890,6 +908,7 @@ class soundBoard():
 
 	def addNoteOff(self,msg):
 		try:
+			#print("removing note "+str(msg.note)+" in response to note off")
 			self.board[msg.channel].pop(msg.note)
 		except KeyError:
 			print("KeyError trying to remove board["+str(msg.channel)+"]["+str(msg.note)+"]")
@@ -1078,6 +1097,9 @@ class camera():
 			if -1 in self.imgCache[ch]: # if the default exists
 				# print("setting default image")
 				image = self.imgCache[ch][-1]
+		elif n == -2:
+			if not n in self.imgCache[ch]:
+				return None
 
 		l = dict()
 		l['img'] = image
@@ -1090,6 +1112,8 @@ class camera():
 		#print("keys in pathCache ",end = " ")
 		#print(self.pathCache.keys())
 		if n == -2:
+			# does the voice *have* a rest image?
+
 			# this jiggery pokery is fairly arbitrary. It's just to give a safe value
 			# for the note start time in the event that one of the paths for a 'rest'
 			# value is time-based
@@ -1124,7 +1148,7 @@ class camera():
 
 		if len(nv) == 0:
 			#print("rest", end = " ")
-			l = self.layerFor(ch,-2,nv,aTime)
+			l  = self.layerFor(ch,-2,nv,aTime)
 
 		for n in nv.keys():
 			t = nv[n][0]
@@ -1883,6 +1907,7 @@ class CVMapEdit(QDialog):
 		self.accept()
 
 # the voice editor
+
 class vEditD(QDialog):
 	def __init__(self, v:voice):
 		super().__init__()
@@ -2183,6 +2208,13 @@ class vEditD(QDialog):
 		self.reject()
 		return None
 
+	def imgNamed(self,fn):
+		if iimf == 'c':
+			image = cv2.imread(fn,cv2.IMREAD_UNCHANGED)
+		else:
+			image = QPixmap(fn)
+		return image
+
 	def saveOut(self):
 		self.midiTimer.stop()
 		self.myv.vdata["name"] = self.nameEdit.text()
@@ -2197,24 +2229,25 @@ class vEditD(QDialog):
 
 		if defImgIdx == None and self.diEdit.text() != None and self.diEdit.text() != '':
 			# create new entry in imgTable for default image
-			self.model._data.append([-1,None,None,self.diEdit.text()])
+			image = self.imgNamed(self.diEdit.text())
+			self.model._data.append([-1,None,None,self.diEdit.text(),image])
 		elif defImgIdx != None:
-			self.model._data[defImgIdx] = [-1,None,None,self.diEdit.text()]
+			image = self.imgNamed(self.diEdit.text())
+			self.model._data[defImgIdx] = [-1,None,None,self.diEdit.text(),image]
 
 		if restImgIdx == None and self.restEdit.text() != None and self.restEdit.text() != '':
 			# create new entry in imgTable for rest image
-			self.model._data.append([-2,None,None,self.restEdit.text()])
+			image = self.imgNamed(self.resEdit.text())
+			self.model._data.append([-2,None,None,self.restEdit.text(),image])
 		elif restImgIdx != None:
-			self.model._data[restImgIdx] = [-2,None,None,self.restEdit.text()]
+			image = self.imgNamed(self.resEdit.text())
+			self.model._data[restImgIdx] = [-2,None,None,self.restEdit.text(),image]
 
 		self.myv.vdata["imgTable"] = []
 		for idx in range(0, len(self.model._data)):
 			if self.model._data[idx][3] != None and self.model._data[idx][3] != '':
 				# mess("found "+ self.model._data[idx][3]+" in note map")
-				if iimf == 'c':
-					image = cv2.imread(self.model._data[idx][3],cv2.IMREAD_COLOR)
-				else:
-					image = QPixmap(self.model._data[idx][3])
+				image = self.imgNamed(self.model._data[idx][3])
 				# put cached image into table
 				self.myv.vdata["imgTable"].append([ self.model._data[idx][0], self.model._data[idx][3],image])
 		self.accept()
@@ -2258,8 +2291,8 @@ class AmenicMain(QMainWindow):
 		self.savePAsAct.setEnabled(gotAudio)
 		self.impVAct.setEnabled(gotAudio)
 		self.impMAct.setEnabled(gotAudio)
-		self.nVoiceBtn.setEnabled(gotAudio)
-		self.edCombo.setEnabled(gotAudio)
+		self.nVoiceBtn.setEnabled(gotAudio and ( mode == 'edit'))
+		self.edCombo.setEnabled(gotAudio and ( mode == 'edit'))
 		self.cMapBtn.setEnabled(gotAudio)
 
 	def setGotVoices(self,gotVoices):
@@ -2367,6 +2400,7 @@ class AmenicMain(QMainWindow):
 			if not self.checkSave():
 				return
 		self.emptyProj()
+		self.startImg()
 
 	def openProj(self):
 		global audioFile
@@ -2597,7 +2631,7 @@ class AmenicMain(QMainWindow):
 					chanMuted[i] = False
 				if not chanMuted[i]:
 					self.setPerfPlayable(True)
-					return
+					continue
 
 	def setMidi(self, performanceFile, imported = False):
 		global performance
@@ -2790,10 +2824,11 @@ class AmenicMain(QMainWindow):
 		#mess("checking playable ")
 		self.checkPerfPlayable(False)
 		#mess("perfPlayable: "+ str(perfPlayable))
-		for i in range(0,16):
-			if not chanPixmaps[i][1]:
-				if CVMap[i][1] != None and CVMap[i][1] != "<none>":
-					self.setCanGenVid(True)
+		if mode == 'export':
+			for i in range(0,16):
+				if not chanPixmaps[i][1]:
+					if CVMap[i][1] != None and CVMap[i][1] != "<none>":
+						self.setCanGenVid(True)
 
 
 	def edComboInit(self):
@@ -2812,6 +2847,25 @@ class AmenicMain(QMainWindow):
 			self.edComboInit()
 			self.setGotVoices(True)
 			self.setClean(False)
+
+	def startImg(self):
+		global emptyImg
+		global iimf
+		global theatre
+
+		emptyPath = amenicDir+"/Empty.png"
+		if iimf == 'q':
+			emptyImg = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
+			theatre.setPixmap(emptyImg)
+		else:
+			# print ("loading emptyImg")
+			emptyImg = cv2.resize(cv2.imread(emptyPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
+			ei = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
+			theatre.setPixmap(ei)
+			#theatre.setPixmap(convertCvImage2QtImage(emtyImg))
+		# I have a suspicion that these two lines are the only ones that actually do anything
+		theatre.setLayers([])
+		theatre.show()
 
 	def initUI(self):
 		global emptyImg
@@ -2935,22 +2989,12 @@ class AmenicMain(QMainWindow):
 
 		theatre = theatreLabel(self)
 		theatre.setMaximumHeight(tHeight)
-		emptyPath = amenicDir+"/Empty.png"
 
 		cleanPixmap = QPixmap(amenicDir+"/clean.png")
 		blackPath = amenicDir + "/black.png"
 		blackImgQ = QPixmap(blackPath)
 		blackImg = cv2.resize(cv2.imread(blackPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
-
-		if iimf == 'q':
-			emptyImg = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
-			theatre.setPixmap(emptyImg)
-		else:
-			# print ("loading emptyImg")
-			emptyImg = cv2.resize(cv2.imread(emptyPath,cv2.IMREAD_COLOR),(tWidth,tHeight))
-			ei = QPixmap(emptyPath).scaled(tWidth,tHeight,2,1)
-			theatre.setPixmap(ei)
-			#theatre.setPixmap(convertCvImage2QtImage(emtyImg))
+		self.startImg()
 
 		self.btnPlay = QPushButton('&Play')
 		self.btnPlay.clicked.connect(self.play)
@@ -3054,14 +3098,17 @@ class AmenicMain(QMainWindow):
 		self.stopFlag = True # stops midi listener and camera
 		if perfPlayable:
 			self.p.stop() # stops midfile player
-			print("according to tickCount, last midi message was at "+str(totalTicks * tickDuration / 1000000 ))
-			print("according to rtc, it was at "+str(lastMsgTime-self.firstEventTime))
+			if listenChannel != None:
+				print("according to tickCount, last midi message was at "+str(totalTicks * tickDuration / 1000000 ))
+				print("according to rtc, it was at "+str(lastMsgTime-self.firstEventTime))
 
 		mixer.stop()
 		mixer.quit() # just stop doesn't work. quit leaves it in an unplayable state so:
 		mixer.init()
 		mixer.music.load(audioFile)
 		self.btnStop.setEnabled(False)
+
+
 		if listenChannel != None:
 			print("putting out final event with raw time",end=" ")
 			# this value is typically a note_off or a note_on V=0
@@ -3070,7 +3117,10 @@ class AmenicMain(QMainWindow):
 			performance.save(amenicDir + "/secmid.apf")
 			#logit(3,"calling makeChannelTimelines")
 			makeChannelTimelines(performance)
-			self.setCanGenVid(True)
+			if mode == "export":
+				self.setCanGenVid(True)
+
+		self.startImg()
 
 if __name__ == '__main__':
 	app = QApplication(sys.argv)

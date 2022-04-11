@@ -47,6 +47,7 @@ I don\'92t recall the conditions where the segfault happened, but it was probabl
 9(+)Currently the \'91imported midi\'92 project exports, with sound, exactly as expected to mp4\
 \
 10(-)Import audio. Select import audio again, but cancel. At least *appears* to lose the original imported audio\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
 
 \f0\fs24 \cf0 \CocoaLigature1 \
 Priorities (6) (7,8) (5) (0.5)\
@@ -79,16 +80,12 @@ Bad alternative initialization of chanPixmaps \
 \
 0.5 the MixerLag variable seems to work. what is the best way to calibrate it I\'92m not sure\
 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 Y direction in chan pixmaps is counter-intuitive. and line too thick\
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 Clear doesn\'92t clear the old events from the midifile I think it *does* but the pixmap wasn\'92t cleared \
+Y direction in chan pixmaps is counter-intuitive. and line too thick\
+\
+Clear doesn\'92t clear the old events from the midifile I think it *does* but the pixmap wasn\'92t cleared \
 \
 I\'92m also seeing an oddity in the timeline as it appears to be showing the gap between notes or something like that \
-\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
-\cf0 \
+\
 In record mixerLag seems \'85 ok but I\'92m missing the last note \
 \
 Managed to make the last note work by putting a big time delta on the last note off. This makes 0 sense to me. event times were shifted by one event in mp4out and playback (and timeline gen)\
@@ -163,7 +160,51 @@ with mixerlag of 0.16 seconds, initial cueing appears very good, but after 64 ba
 \
 Second test looks OK, according to accumulated ticks vs realtime calc, the last event was about 0.07s early. Maybe we need to go to 128 bars. But that 64 bar test was 2m14s so I think we\'92re OK to do a short demo. Around 0.7 early seems to be near the mark. Overdub track on existing recording seems to be quite late cued. I guess it\'92s because of the latency of starting up the midifile, but that should be measurable. Looks like a \'91playback artefact\'92 (at playback time, not record time). Seems ok in mpeg export. Maybe reduce the playback framerate.\
 \
+The qlineedit problem turns out to be an interaction between QT and moviepy. I\'92ve reported it as a moviepy bug, although it could just as easily be some kind of insecurity in QT. But always blame the lesser of the two, and I think in this case, qt is the lighthouse.\
 \
+Workaround is to have a command line argument that controls the loading of moviepy and access to the export function. Conversely access to the editing functions that require a sensible QlineEdit, namely editing voices. So an \'91e\'92 on the command line allows editing \
+\
+Clearing a channel clearly isn\'92t clearing. Probably easiest to figure out what\'92s going on by recording a simple example, saving, and examining the midi. Dang! test case isn\'92t doing it \
+\
+Sometimes fuzzy blob comes out as a hard-edged square. When. Why?\
+\
+If you edit the voice in any way, the image turns into a square during that session. Save, relaod and it looks OK\
+\
+Bad image re-cacheing on veditd save \
+\
+###\
+\
+Weird counter-intuitive inversion of paths\
+\
+a falling sweep goes down to lowest value then bounces back up to the top instead of staying at lowest\
+\
+Well it seems to be that, in the call to \'91getval\'92, the \'91ontime (param 2) stays the same for a while, then jumps forward by a second, and keeps changing - apparently following \'92now\'92 \
+Value comes from nvn[0], nvn passed into layerfor as 3rd param\
+Called from \'91render\'92 . render does this:\
+\
+		for n in nv.keys():\
+			t = nv[n][0]\
+			v = nv[n][1]\
+			# so we have channel in ch, note in n and velocity in v\
+			# and start time in t.\
+			l = self.layerFor(ch,n,nv[n],aTime)\
+\
+The keys of nv are \
+\
+nv is the second param iin call to render, and, yes it\'92s the board snapshot for a particular channel.\
+\
+So is the board stime corrupt or is it happening soemwhere along that chain?\
+\
+What happens is that, at some stage, the snap is empty, at which point, render asks layerfor to generate the rest note. Not that there\'92s one defined for this voice. So two questions\
+\
+1) why does snap get emptied\
+2) why does layerfor try to generate the non-existent rest note, or, probably more to the point, why does \
+\
+mostly confusion caused by a bug in overlayszopat \
+\
+###\
+\
+Need to look at what makes proj dirty in order to manage availability of \'92save\'92 vs \'91save as\'92\
 \
 \
 \

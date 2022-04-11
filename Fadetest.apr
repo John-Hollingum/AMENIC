@@ -1,0 +1,151 @@
+{
+ "voices": {
+  "opblob": {
+   "imgTable": [
+    [
+     -1,
+     "/Users/johnhollingum/Documents/AMENIC/Fuzzy Blob.png"
+    ]
+   ],
+   "xpos": {
+    "ptype": "fixed",
+    "timestep": 0,
+    "imin": null,
+    "imax": null,
+    "omin": 500,
+    "omax": 960,
+    "ts2": null,
+    "invert": false,
+    "usedfor": "xpos",
+    "maintar": true,
+    "scaling": null,
+    "native": null
+   },
+   "ypos": {
+    "ptype": "fixed",
+    "timestep": 0,
+    "imin": null,
+    "imax": null,
+    "omin": 100,
+    "omax": 540,
+    "ts2": null,
+    "invert": false,
+    "usedfor": "ypos",
+    "maintar": true,
+    "scaling": null,
+    "native": null
+   },
+   "xsize": {
+    "ptype": "fixed",
+    "timestep": 0.5,
+    "imin": null,
+    "imax": null,
+    "omin": 0,
+    "omax": 960,
+    "ts2": null,
+    "invert": false,
+    "usedfor": "xsize",
+    "maintar": true,
+    "scaling": null,
+    "native": true
+   },
+   "ysize": {
+    "ptype": "fixed",
+    "timestep": 0.5,
+    "imin": null,
+    "imax": null,
+    "omin": 0,
+    "omax": 540,
+    "ts2": null,
+    "invert": false,
+    "usedfor": "ysize",
+    "maintar": true,
+    "scaling": null,
+    "native": null
+   },
+   "opacity": {
+    "ptype": "sweep",
+    "timestep": 1.0,
+    "imin": null,
+    "imax": null,
+    "omin": 0,
+    "omax": 100,
+    "ts2": null,
+    "invert": true,
+    "usedfor": "opacity",
+    "maintar": true,
+    "scaling": 101.0,
+    "native": null,
+    "top": 100
+   }
+  }
+ },
+ "cvmap": [
+  [
+   1,
+   "opblob"
+  ],
+  [
+   2,
+   "<none>"
+  ],
+  [
+   3,
+   "<none>"
+  ],
+  [
+   4,
+   "<none>"
+  ],
+  [
+   5,
+   "<none>"
+  ],
+  [
+   6,
+   "<none>"
+  ],
+  [
+   7,
+   "<none>"
+  ],
+  [
+   8,
+   "<none>"
+  ],
+  [
+   9,
+   "<none>"
+  ],
+  [
+   10,
+   "<none>"
+  ],
+  [
+   11,
+   "<none>"
+  ],
+  [
+   12,
+   "<none>"
+  ],
+  [
+   13,
+   "<none>"
+  ],
+  [
+   14,
+   "<none>"
+  ],
+  [
+   15,
+   "<none>"
+  ],
+  [
+   16,
+   "<none>"
+  ]
+ ],
+ "audiofile": "/Users/johnhollingum/Documents/AMENIC/sixteenbars.mp3",
+ "midifile": "/Users/johnhollingum/Documents/AMENIC/Fadetest.apf"
+}
