@@ -25,6 +25,8 @@ import os, subprocess
 import shutil
 from mutagen.mp3 import MP3
 import re
+import math
+
 if len(sys.argv) == 2:
 	if sys.argv[1] != 'e':
 		mode = 'export'
@@ -67,8 +69,9 @@ board = None
 performance = None
 audioFile = ''
 listenChannel = None
+inPortName = None
 totalTicks = 0
-PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble"]
+PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble","avwobble"]
 FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
 yauto = False
 bpm = None
@@ -664,6 +667,12 @@ class ipath():
 		self.data["usedfor"] = forUse
 		self.setDefaults()
 
+	def copy(self):
+		cip = ipath(self.data['usedfor'],self.data['ptype'])
+		for k in self.data:
+			cip.data[k] = self.data[k]
+		return cip
+
 	def setDefaults(self):
 
 		forUse = self.data['usedfor']
@@ -679,6 +688,7 @@ class ipath():
 				self.data['omin'] = 100
 			self.data['omax'] = 100
 		self.data['timestep'] = 0.5
+		self.data['ts2'] = 2
 		self.data['maintar'] = True
 
 		if forUse == 'xsize':
@@ -689,7 +699,7 @@ class ipath():
 			self.data['imin'] = 21
 			self.data['imax'] = 108
 
-		if pt in ['vflat', 'vfall', 'vwobble']:
+		if pt in ['vflat', 'vfall', 'vwobble','avwobble']:
 			self.data['imin'] = 0
 			self.data['imax'] = 127
 
@@ -699,15 +709,21 @@ class ipath():
 
 	def setFromLoad(self,loadData):
 		self.data = loadData.copy()
+		self.calcScaling()
+		self.calcTop()
 
 	def calcScaling(self):
+		orange = int(self.data['omax']) - self.data['omin'] + 1
 		if self.data['ptype'] in ['vflat', 'vfall', 'nflat','nfall']:
 			irange = self.data['imax'] - self.data['imin'] + 1
-			orange = int(self.data['omax']) - self.data['omin'] + 1
 			self.data['scaling'] = orange / irange
-		if self.data['ptype'] in ['sweep']:
-			orange = int(self.data['omax']) - self.data['omin'] + 1
+		if self.data['ptype'] in ['sweep', 'avwobble']:
 			self.data['scaling'] = orange / self.data['timestep']
+		if self.data['ptype'] in ['vwobble', 'avwobble']:
+			self.data['centre'] = ( self.data['omin'] + self.data['omax']) / 2
+			self.data['maxamp'] = orange
+		if self.data['ptype'] == 'avwobble':
+			self.data['scaling2'] = orange / self.data['ts2']
 
 	def calcTop(self):
 		if self.data['invert']:
@@ -782,17 +798,37 @@ class ipath():
 
 		# like sweep, but initial value comes from velocity and falls
 		if self.data['ptype'] == "vfall":
-			val = (velocity - self.data['imin']) * self.data['scaling']
+			val = (velocity - self.data['imin']) + self.data['scaling'] * e
 			return self.present(self.data['usedfor'],val)
 
 		# like vfall, but based on note rather than velocity
 		if self.data['ptype'] == "nfall":
-			val = (note - self.data['imin']) * self.data['scaling']
+			val = (note - self.data['imin']) + self.data['scaling'] * e
 			return self.present(self.data['usedfor'],val)
 
-		if self.data['ptype'] == "vwobble":
-			a = (nTimeSteps * 0.1) % math.pi
-			val = (sin(a) + 1) * velocity
+
+		if self.data['ptype'] in ["vwobble","avwobble"]:
+			angle = (e % self.data['timestep']) / self.data['timestep'] * math.pi * 2
+			if self.data['ptype'] == 'vwobble':
+				radius = self.data['maxamp'] * velocity / 256
+			else:
+				#print(str(self.data['scaling']))
+				#print(str(e))
+				#print(str(self.data['scaling']*e))
+				attn = self.data['scaling2'] * e # at 0 time, this is 0, at time ts2 it would be maxamp
+				if attn >= self.data['maxamp']:
+					radius = 0
+				else:
+					radius = ( self.data['maxamp'] - attn) * velocity / 256
+			# we want amplitude to be proportional to velocity. If velocity is imax,
+			# oscillation should be between omin and omax, if it is imin, it should be
+			# static at (omin + omax ) /2
+			# how should the frequency relate to the time period?
+			# it should go from 0 to 2pi  every timestep. So we don't care how many timesteps, we want to
+			# know how far down the current timestep
+			# the attenuation is linear. The amplitude goes to 0 in ts2
+			#print("Radius: "+ str(radius))
+			val = self.data['centre'] + math.sin(angle) * radius
 			return self.present(self.data['usedfor'],val)
 
 def cvLayers(layers):
@@ -1307,6 +1343,9 @@ class TableModel(QAbstractTableModel):
 # a voice object with note image table and path definitions for specific attributes
 class voice():
 
+	def sd(self):
+		self.isClean = False
+
 	def __init__(self):
 		self.vdata = {
 			"imgTable": [ ],
@@ -1322,11 +1361,23 @@ class voice():
 		self.vdata["xsize"] = ipath("xsize","fixed")
 		self.vdata["ysize"] = ipath("ysize","fixed")
 		self.vdata["opacity"] = ipath("opacity","fixed")
+		self.isClean = True
 
 	def edit(self):
 		ve = vEditD(self)
+		ve.changedVoice.connect(self.sd)
 		ve.exec_()
 		return
+
+	def copy(self):
+		cv = voice()
+		for k1 in self.vdata:
+			#print(str(k1))
+			if k1 == "name":
+				cv.vdata[k1] = self.vdata[k1]
+			else:
+				cv.vdata[k1] = self.vdata[k1].copy()
+		return cv
 
 # special combo class that is used for selecting path type for a particular voice Attribute
 class PCombo(QComboBox):
@@ -1342,6 +1393,12 @@ class PCombo(QComboBox):
 
 	def edPath(self):
 		global yauto
+
+		# if this has changed, what's dirty? The path or the voice?
+		# if this can't be cancelled, then it's the voice that is dirty.
+		# cancel doesn't set it back to it's original ptype, so this is making
+		# the voice edit dirty, so get the voice edit to tie the currentTextChanged
+		# to its own dirty slot
 		if not yauto:
 			self.myPath.data['timestep'] = 0
 			self.myPath.data['omin'] = 0
@@ -1402,16 +1459,19 @@ class xsizeCombo(QComboBox):
 
 # special button for editing the details of a path without changing the path type
 class PEButton(QPushButton):
+	changedPath = pyqtSignal()
+
 	def __init__(self,path):
 		super().__init__()
 		self.setText("Edit")
 		self.clicked.connect(self.eptype)
-
 		self.myPath = path
 
 	def eptype(self,idx):
-		pe = pathEdit(self.myPath)
-		pe.exec_()
+		self.pe = pathEdit(self.myPath)
+		self.pe.exec_()
+		if not self.pe.isClean:
+			self.changedPath.emit()
 
 # possibly obsolete slider control
 class vSlide(QSlider):
@@ -1436,7 +1496,15 @@ class pathEdit(QDialog):
 		super().__init__()
 		self.setModal(True)
 		self.myPath = path
+		self.isclean = True
 		self.initUI()
+
+	def setClean(self,clean):
+		self.isClean = clean
+		self.btnSave.setEnabled(not self.isClean)
+
+	def sd(self):
+		self.setClean(False)
 
 	def saveOut(self):
 
@@ -1445,6 +1513,11 @@ class pathEdit(QDialog):
 			self.myPath.data['timestep'] = float(self.tUnits1.text())
 		else:
 			self.myPath.data['timestep'] = 0
+
+		if self.useSecondaryTime:
+			self.myPath.data['ts2'] = float(self.tUnits2.text())
+		else:
+			self.myPath.data['ts2'] = 0
 
 		if ptype == 'fixed':
 			self.myPath.data['omin'] = int(self.fixVEdit.text())
@@ -1466,14 +1539,21 @@ class pathEdit(QDialog):
 		self.accept()
 
 	def invertCheck(self):
+		self.setClean(False)
 		inverse = self.inverseCheck.isChecked()
 		self.nqualify.setText(self.ocaptionneg[inverse])
 
 	def cancelOut(self):
+		self.setClean(True)
 		self.reject()
 
 	def changeTimeUnits(self):
+		self.setClean(False)
 		mess("Here we'd change the time units")
+
+	def changeTime2Units(self):
+		self.setClean(False)
+		mess("Here we'd change the time 2 units")
 
 	def initUI(self):
 		global bpm
@@ -1492,9 +1572,10 @@ class pathEdit(QDialog):
 		self.forLabel.setTextFormat(1)
 		self.forLabel.setText("<big>Parameters for <b>"+forUse+"</b> Path type <b>"+ptype+"</b></big>")
 
-		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble"]
+		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble",'avwobble']
 
-		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble"]
+		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble", 'avwobble']
+		self.useSecondaryTime = ptype in [ "avwobble", "accel" ]
 
 		timeLower = 1 / fRate # not much point (I *think*) in allowing a time period less than the frame rate
 		timeUpper = 20        # I can't see (for the moment) wanting any effect to take longer than 20 seconds. Mostly
@@ -1508,12 +1589,14 @@ class pathEdit(QDialog):
 		oupper = self.myPath.data['omax']
 
 		ts = self.myPath.data['timestep']
+		ts2 = self.myPath.data['ts2']
+
 		inverse = self.myPath.data['invert']
 
 		if self.scaledFromInput:
 			if ptype in [ "nflat", "nfall"]:
 				iscalecaption = "As Note varies from "
-			if ptype in ["vflat","vfall","vwobble"]:
+			if ptype in ["vflat","vfall","vwobble","avwobble"]:
 				iscalecaption = "As velocity varies from "
 
 		if self.scaledFromInput or self.scaledFromTime:
@@ -1551,9 +1634,11 @@ class pathEdit(QDialog):
 			self.iLowerLabel = QLabel(iscalecaption)
 			self.iLower = QLineEdit()
 			self.iLower.setText(str(ilower))
+			self.iLower.textChanged.connect(self.sd)
 			self.iUpperLabel = QLabel(" to ")
 			self.iUpper = QLineEdit()
 			self.iUpper.setText(str(iupper))
+			self.iUpper.textChanged.connect(self.sd)
 			inputHBox = QHBoxLayout()
 			inputHBox.addWidget(self.iLowerLabel)
 			inputHBox.addWidget(self.iLower)
@@ -1572,9 +1657,11 @@ class pathEdit(QDialog):
 			self.oLowerLabel = QLabel(oscalecaption)
 			self.oLower = QLineEdit()
 			self.oLower.setText(str(olower))
+			self.oLower.textChanged.connect(self.sd)
 			self.oUpperLabel = QLabel(ocaption2)
 			self.oUpper = QLineEdit()
 			self.oUpper.setText(str(oupper))
+			self.oUpper.textChanged.connect(self.sd)
 			self.nqualify = QLabel(self.ocaptionneg[inverse])
 			outputHBox = QHBoxLayout()
 			invHBox.addWidget(self.inverseLabel)
@@ -1593,6 +1680,7 @@ class pathEdit(QDialog):
 			self.tUnitsLabel1 = QLabel("taking ")
 			self.tUnits1 = QLineEdit()
 			self.tUnits1.setText(str(ts))
+			self.tUnits1.textChanged.connect(self.sd)
 			self.tUnitsCombo = QComboBox()
 			self.tUnitsCombo.addItem("seconds")
 			if bpm != None:
@@ -1609,18 +1697,41 @@ class pathEdit(QDialog):
 			timeHBox.addWidget(self.tUnitsCombo)
 			timeVBox.addLayout(timeHBox)
 			timeVBox.addWidget(self.tUnitsLabel2)
+			if self.useSecondaryTime:
+				if ptype == 'avwobble':
+					self.t2Label = QLabel("Attenuate to 0 amplitude after")
+				else:
+					self.t2Label = QLabel("some generic time 2 thing")
+				self.tUnits2 = QLineEdit()
+				self.tUnits2.setText(str(ts2))
+				self.tUnits2.textChanged.connect(self.sd)
+				self.tUnits2Combo = QComboBox()
+				self.tUnits2Combo.addItem("seconds")
+				if bpm != None:
+					self.tUnits2Combo.addItem("beats")
+				self.tUnits2Combo.currentTextChanged.connect(self.changeTime2Units)
+				time2HBox = QHBoxLayout()
+				time2HBox.addWidget(self.t2Label)
+				time2HBox.addWidget(self.tUnits2)
+				time2HBox.addWidget(self.tUnits2Combo)
+				timeVBox.addLayout(time2HBox)
+
 			self.timeGBox.setLayout(timeVBox)
+
+
 
 		if ptype == "fixed":
 			self.omin = self.myPath.data["omin"]
 			self.fixLabel = QLabel("Fixed value for "+forUse)
 			self.fixVEdit = QLineEdit()
 			self.fixVEdit.setText(str(self.omin))
+			self.fixVEdit.textChanged.connect(self.sd)
 			#self.fixSlide = vSlide(self.myPath.data['omin'],self.myPath.data['omax'],self.fixVLabel,self.omin,self)
 
 		self.btnSave = QPushButton()
 		self.btnSave.setText("Save")
 		self.btnSave.clicked.connect(self.saveOut)
+		self.btnSave.setEnabled(False)
 
 		self.btnCancel = QPushButton()
 		self.btnCancel.setText("Cancel")
@@ -1655,12 +1766,32 @@ class pathEdit(QDialog):
 # edits the layers list controlling association of voices with incoming live performance data or
 # midi file playback channels
 class CVMapEdit(QDialog):
+	# this may change the project by editing voices or clearing _data
+	# both of those are instant and non-cancellable
+	# changing channel voice assignments and listen/mute status are cancellable and get
+	# signalled at saveOut time
+	changedProj = pyqtSignal()
+
+	def setClean(self,clean):
+		self.isClean = clean
+		if not self.isClean:
+			self.btnSave.setEnabled(True)
+			self.changedProj.emit()
+
+	def sd(self):
+		self.setClean(False)
+
+	def saveEnable(self):
+		# use this for cancellable changes. It enables save, and saveout may signal dirty
+		self.btnSave.setEnabled(True)
+
 	def __init__(self,mainWind):
 		super().__init__()
 		self.setModal(True)
 		self.initUI()
 		self.newCVMap = []
 		self.mw = mainWind
+		self.isClean = True
 
 	def cbValues(self,idx,vname):
 		global chanMuted
@@ -1668,7 +1799,7 @@ class CVMapEdit(QDialog):
 		gotVoice = ( vname != '<none>')
 		clean = chanPixmaps[idx -1][1]
 		listenWidget = self.cvm.indexWidget(self.model.index(idx,2))
-		listenWidget.setEnabled(clean and gotVoice)
+		listenWidget.setEnabled(clean and gotVoice and inPortName != "<none>")
 		if not (clean and gotVoice):
 			listenWidget.setChecked(False)
 		muteWidget = self.cvm.indexWidget(self.model.index(idx,3))
@@ -1680,10 +1811,13 @@ class CVMapEdit(QDialog):
 		global voices
 		global CVMap
 
+		self.saveEnable()
 		w = self.cvm.indexWidget(self.model.index(idx,1))
 		if w.currentText() == "+Add New":
 			v = voice()
 			v.edit()
+			if not v.isClean:
+				self.sd()
 			if v != None:
 				if v.vdata["name"] == "Untitled":
 					v= None
@@ -1705,6 +1839,7 @@ class CVMapEdit(QDialog):
 		global redLEDOff
 		global redLEDOn
 
+		self.saveEnable()
 		w = self.cvm.indexWidget(self.model.index(idx, 2))
 		if w.checkState():
 			# ensure it has a mapping
@@ -1733,6 +1868,7 @@ class CVMapEdit(QDialog):
 	def toggleMute(self,idx):
 		global chanMuted
 
+		self.saveEnable()
 		w = self.cvm.indexWidget(self.model.index(idx, 3))
 		chanMuted[idx - 1] = w.checkState()
 
@@ -1751,6 +1887,7 @@ class CVMapEdit(QDialog):
 		if not found:
 			err("can't find index for track named '"+trackName+"'")
 		else:
+			self.sd()
 			del performance.tracks[toDelete]
 			tl = self.cvm.indexWidget(self.model.index(idx,5))
 			tl.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
@@ -1768,6 +1905,7 @@ class CVMapEdit(QDialog):
 		global timeLineWidth
 		global timeLineHeight
 		global audioFile
+		global inPortName
 
 		if idx == 0:
 			if audioFile != '':
@@ -1795,13 +1933,13 @@ class CVMapEdit(QDialog):
 			else:
 				# not sure this can happen
 				clean = True
-			canListen =  clean and gotVoice
+			canListen =  clean and gotVoice and inPortName != None and inPortName != "<none>"
 			listening = QCheckBox()
 			listening.setTristate(False)
 			listening.setChecked(False)
+			listening.setEnabled(canListen)
 			self.cvm.setIndexWidget(self.model.index(idx,2),listening)
 			listening.stateChanged.connect(partial(self.toggleChecked,idx))
-			listening.setEnabled(canListen)
 
 			clearBtn = QPushButton()
 			clearBtn.setText("Clear")
@@ -1879,10 +2017,12 @@ class CVMapEdit(QDialog):
 			self.comboAdd(idx)
 
 		self.btnCancel = QPushButton('Cancel')
+		self.btnCancel.setToolTip("Cancel channel voice mappings/mutes/listens; Voice creates and performance clears can't be backed out")
 		self.btnCancel.clicked.connect(self.cancelOut)
 
 		self.btnSave = QPushButton('Save')
 		self.btnSave.clicked.connect(self.saveOut)
+		self.btnSave.setEnabled(False)
 
 		# Layout
 		vbox = QVBoxLayout()
@@ -1900,6 +2040,8 @@ class CVMapEdit(QDialog):
 
 	def saveOut(self):
 		global CVMap
+
+		self.setClean(False)
 		CVMap.clear()
 		for idx in range(1, 17):
 			w = self.cvm.indexWidget(self.model.index(idx, 1))
@@ -1909,6 +2051,8 @@ class CVMapEdit(QDialog):
 # the voice editor
 
 class vEditD(QDialog):
+	changedVoice = pyqtSignal()
+
 	def __init__(self, v:voice):
 		super().__init__()
 		self.setModal(True)
@@ -1916,6 +2060,17 @@ class vEditD(QDialog):
 		# a reference to the passed-in voice. We need this so we can write to it
 		# at save time and totally ignore it at cancel time
 		self.myv = v
+		# the problem at cancel time is that we can ignore the parts of the voice
+		# that have been changed by the widgets in this window, but some parts may
+		# have already been changed and saved at the voice level. We need a copy
+		self.revertCopy = v.copy()
+
+	def setClean(self,clean):
+		self.isClean = clean
+		self.btnSave.setEnabled(not self.isClean)
+
+	def sd(self):
+		self.setClean(False)
 
 	def resumeTimer(self):
 		# flush out any midi events that may have come in while we were dealing with the event
@@ -1977,6 +2132,7 @@ class vEditD(QDialog):
 		maintainAR = not maintainAR
 		self.ysPCombo.setEnabled(not maintainAR)
 		self.ysE.setEnabled(not maintainAR)
+		self.sd()
 		if maintainAR:
 			# do the sync right now. Most of this is just for appearance
 			self.myv.vdata['xsize'].data['maintar'] = True
@@ -1989,13 +2145,26 @@ class vEditD(QDialog):
 		else:
 			self.myv.vdata['xsize'].data['maintar'] = False
 
+	def setInport(self):
+		global inPortName
+
+		if inPortName == None:
+			self.inport = None
+		else:
+			self.inport = mido.open_input(inPortName)
+			self.midiTimer = QTimer(self)
+			self.midiTimer.timeout.connect(self.checkMidi)
+			self.midiTimer.start(50)
+
 	def initUI(self, v:voice):
 		global maintainAR
+		global inPortName
 
 		self.setWindowTitle('Edit Voice')
 		self.resize(800,600)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
 
+		self.isClean = True # don't use setclean at this stage as the objects it references aren't yet instantiated
 		if v.vdata["name"] == "Untitled":
 			self.nameAcquired = False
 			self.new = True
@@ -2003,10 +2172,7 @@ class vEditD(QDialog):
 			self.nameAcquired = True
 			self.new = False
 
-		self.inport = mido.open_input('Steinberg UR22mkII  Port1')
-		self.midiTimer = QTimer(self)
-		self.midiTimer.timeout.connect(self.checkMidi)
-		self.midiTimer.start(50)
+		self.setInport()
 
 		# set up widgets
 		self.nameLabel = QLabel('Name')
@@ -2026,6 +2192,7 @@ class vEditD(QDialog):
 		self.diEdit = QLineEdit(self)
 		self.diEdit.setText(self.imgt(v,-1))
 		self.diEdit.setToolTip("Image shown when any key pressed unless overridded in note map table")
+		self.diEdit.textChanged.connect(self.sd)
 		self.diLookup = QPushButton('>')
 		self.diLookup.clicked.connect(self.getDefImg)
 
@@ -2033,6 +2200,7 @@ class vEditD(QDialog):
 		self.restEdit = QLineEdit(self)
 		self.restEdit.setText(self.imgt(v,-2))
 		self.restEdit.setToolTip("Image, in monophonic mode shown when no note playing")
+		self.restEdit.textChanged.connect(self.sd)
 		self.restLookup = QPushButton('>')
 		self.restLookup.clicked.connect(self.getRestImg)
 
@@ -2080,22 +2248,26 @@ class vEditD(QDialog):
 
 		self.btnSave = QPushButton('Save')
 		self.btnSave.clicked.connect(self.saveOut)
-		self.btnSave.setEnabled(self.nameAcquired)
+		self.btnSave.setEnabled(self.nameAcquired and not self.isClean)
 
 		self.xpP = v.vdata["xpos"]
 		self.xposLabel = QLabel("xpos")
 		self.xpPCombo = PCombo(self.xpP)
+		self.xpPCombo.currentTextChanged.connect(self.sd) # we're always dirty if the ptype has changed
 		self.xpE = PEButton(self.xpP)
+		self.xpE.changedPath.connect(self.sd) # we're only dirty if the click on the PEButton resulted in the path being modified
 
 		self.ypP = v.vdata["ypos"]
 		self.yposLabel = QLabel("ypos")
 		self.ypPCombo = PCombo(self.ypP)
+		self.ypPCombo.currentTextChanged.connect(self.sd)
 		self.ypE = PEButton(self.ypP)
-
+		self.ypE.changedPath.connect(self.sd)
 
 		self.xsP = v.vdata["xsize"]
 		self.xsizeLabel = QLabel("xsize")
 		self.xsE = PEButton(self.xsP)
+		self.xsE.changedPath.connect(self.sd)
 
 		maintainAR = v.vdata['xsize'].data['maintar']
 		self.nativeSize = v.vdata['xsize'].data['native']
@@ -2110,15 +2282,20 @@ class vEditD(QDialog):
 		self.ysizeLabel = QLabel("ysize")
 		self.ysPCombo = PCombo(self.ysP)
 		self.ysPCombo.setEnabled(not maintainAR)
+		self.ysPCombo.currentTextChanged.connect(self.sd)
 		self.ysE = PEButton(self.ysP)
+		self.ysE.changedPath.connect(self.sd)
 		self.ysE.setEnabled(not maintainAR)
 
 		self.xsPCombo = xsizeCombo(self.xsP,self.ysP,self.ysPCombo)
+		self.xsPCombo.currentTextChanged.connect(self.sd)
 
 		self.opP = v.vdata["opacity"]
 		self.opacityLabel = QLabel("opacity")
 		self.opPCombo = PCombo(self.opP)
+		self.opPCombo.currentTextChanged.connect(self.sd)
 		self.opE =PEButton(self.opP)
+		self.opE.changedPath.connect(self.sd)
 
 		# Layout
 		hboxouter = QHBoxLayout()
@@ -2204,8 +2381,12 @@ class vEditD(QDialog):
 		mess("Here we offer to change the name of the voice")
 
 	def cancelOut(self):
+		# this doesn't revert changes to voice-owned paths, which it should
+		# how does path edit cancel revert changes?? - it does nothing, it simply doesn't copy the data from
+		# the widgets into the voice. We'd have to keep a copy
 		self.midiTimer.stop()
 		self.reject()
+		self.myv.vdata = self.revertCopy.vdata
 		return None
 
 	def imgNamed(self,fn):
@@ -2216,6 +2397,7 @@ class vEditD(QDialog):
 		return image
 
 	def saveOut(self):
+		self.changedVoice.emit()
 		self.midiTimer.stop()
 		self.myv.vdata["name"] = self.nameEdit.text()
 		# mess("model data size  "+str(len(self.model._data)))
@@ -2253,19 +2435,13 @@ class vEditD(QDialog):
 		self.accept()
 
 	def maybeActiveSave(self):
-		# two things wrong here.
-		# 1 any dirtying action when the name isn't 'Untitled' should make save active
-		# 2 Any change of the name should call into question whether this is a name change or
-		#   a 'save as'
-		# so the whole form would be numb until there was a valid name
-		#    Once a valid name is acquired, the form should be active and the name numb
-		#    when the name is numb, (and nothing is dirty?) there is an option to save a copy
-		#    with a diifferent name or to rename the voice
 		s = self.nameEdit.text
 		if s != "Untitled" and s != "" and s != None :
 			self.btnSave.setEnabled(True)
 		else:
 			self.btnSave.setEnabled(False)
+		# whether it's saveable or not, it's definitely dirty:
+		self.sd()
 
 # the main window
 class AmenicMain(QMainWindow):
@@ -2332,6 +2508,9 @@ class AmenicMain(QMainWindow):
 		self.savePAct.setEnabled((not clean) and gotProjName)
 		self.dirtyCheck.setChecked(not clean)
 		cleanProj = clean
+
+	def sd(self):
+		self.setClean(False)
 
 	def checkSave(self):
 		qm = QMessageBox()
@@ -2428,6 +2607,7 @@ class AmenicMain(QMainWindow):
 			# print("Loading voice "+vname)
 			internalVoice = internaliseVoice(proj['voices'][vname],vname)
 			voices.append(internalVoice)
+
 		if len(voices) > 0:
 			self.setGotVoices(True)
 
@@ -2750,6 +2930,13 @@ class AmenicMain(QMainWindow):
 	# this is the routine that kicks off all the facets of 'playing'. I launches the reference audio track
 	# it starts the midi/performance play to soundboard, it starts the performance listener, sending
 	# output to soundboard, and it starts the camera that renders the soundboard and displays to screen.
+
+	def setInport(self):
+		global inPortName
+
+		if inPortName != None:
+			self.inport = mido.open_input(inPortName)
+
 	def play(self):
 		global CVMap
 		global theatre
@@ -2765,19 +2952,20 @@ class AmenicMain(QMainWindow):
 			return
 
 		if listenChannel != None:
-			self.inport = mido.open_input('Steinberg UR22mkII  Port1')
-			self.livePerfTimer = QTimer()
-			self.livePerfTimer.timeout.connect(self.checkPerfSlot)
-			self.performanceStartTime = time.time()
-			self.track = MidiTrack()
-			self.track.name = "forChan"+str(listenChannel)
-			performance.tracks.append(self.track)
-			self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
-			mixerLag = 0.16
-			self.firstEventTime = self.performanceStartTime + mixerLag
-			self.lastEventTime = self.firstEventTime
-			totalTicks = 0
-			self.startPerfTimer()
+			if inPortName != None:
+				self.setInport()
+				self.livePerfTimer = QTimer()
+				self.livePerfTimer.timeout.connect(self.checkPerfSlot)
+				self.performanceStartTime = time.time()
+				self.track = MidiTrack()
+				self.track.name = "forChan"+str(listenChannel)
+				performance.tracks.append(self.track)
+				self.lastPerfMess = Message('program_change', channel = listenChannel, program=12, time=0)
+				mixerLag = 0.16
+				self.firstEventTime = self.performanceStartTime + mixerLag
+				self.lastEventTime = self.firstEventTime
+				totalTicks = 0
+				self.startPerfTimer()
 
 		if performance != None:
 
@@ -2814,6 +3002,7 @@ class AmenicMain(QMainWindow):
 		global CVMap
 
 		cvm = CVMapEdit(self)
+		cvm.changedProj.connect(self.sd)
 		cvm.exec_()
 		self.edComboInit() # new voices may have been added
 		# if an existing populated track has been assigned a voice, this will now be
@@ -2839,10 +3028,33 @@ class AmenicMain(QMainWindow):
 		for v in voices:
 			self.edCombo.addItem(v.vdata['name'])
 
+	def inPortInit(self):
+		global inPortName
+
+		self.inPortCombo.clear()
+		self.inPortCombo.addItem("<none>")
+		alreadySeen = []
+		for p in mido.get_input_names():
+			if not p in alreadySeen:
+				alreadySeen.append(p)
+				if inPortName == None:
+					inPortName = p
+				self.inPortCombo.addItem(p)
+		idx = self.inPortCombo.findText(inPortName)
+		if idx == -1:
+			idx = self.inPortCombo.findText(p)
+			if idx == -1:
+				idx = self.inPortCombo.findText("<none>")
+				inPortName = None
+			else:
+				inPortName = p
+		self.inPortCombo.setCurrentIndex(idx)
+		self.setInport()
+
 	def newVoice(self):
 		v = voice()
 		v.edit()
-		if v != None:
+		if not v.isClean:
 			voices.append(v)
 			self.edComboInit()
 			self.setGotVoices(True)
@@ -2933,6 +3145,10 @@ class AmenicMain(QMainWindow):
 		self.expVidAct.setStatusTip('Export project video to MP4 file')
 		self.expVidAct.triggered.connect(self.genVid)
 
+		self.checkPortsAct = QAction(QIcon(),'Check Devices')
+		self.checkPortsAct.setStatusTip('Check for new midi input devices')
+		self.checkPortsAct.triggered.connect(self.inPortInit)
+
 		menubar = self.menuBar()
 		fileMenu = menubar.addMenu('&File')
 		fileMenu.addAction(self.newPAct)
@@ -2944,6 +3160,8 @@ class AmenicMain(QMainWindow):
 		fileMenu.addAction(self.impMAct)
 		fileMenu.addAction(impAAct)
 		fileMenu.addAction(self.expVidAct)
+		midiMenu = menubar.addMenu('Midi')
+		midiMenu.addAction(self.checkPortsAct)
 
 		self.cMapBtn = QPushButton("Layers")
 		self.cMapBtn.clicked.connect(self.channelMap)
@@ -2953,11 +3171,15 @@ class AmenicMain(QMainWindow):
 		self.nVoiceBtn.clicked.connect(self.newVoice)
 		self.nVoiceBtn.setEnabled(False)
 
-		edLabel = QLabel('&Edit Voice',self)
+		edLabel = QLabel('Edit Voice',self)
 		self.edCombo = QComboBox(self)
 		self.edComboInit()
 		self.edCombo.currentIndexChanged.connect(self.edSelChg)
 		self.edCombo.setEnabled(False)
+
+		self.inPortCombo = QComboBox(self)
+		self.inPortInit()
+		self.inPortCombo.currentIndexChanged.connect(self.inPortChg)
 
 		self.dirtyCheck = QCheckBox()
 		self.dirtyCheck.setTristate(False)
@@ -3012,6 +3234,7 @@ class AmenicMain(QMainWindow):
 
 		hbox1.addWidget(edLabel)
 		hbox1.addWidget(self.edCombo)
+		hbox1.addWidget(self.inPortCombo)
 		hbox1.addWidget(self.dirtyCheck)
 
 		vbox1.addLayout(hbox1)
@@ -3072,6 +3295,14 @@ class AmenicMain(QMainWindow):
 					# mess("edited "+edv.vdata["name"])
 		i = self.edCombo.findText("<Select Voice To Edit>")
 		self.edCombo.setCurrentIndex(i)
+
+	def inPortChg(self,i):
+		global inPortName
+
+		if self.inPortCombo.currentText() == "none":
+			self.inPortName = None
+		else:
+			inPortName = self.inPortCombo.currentText()
 
 	def createNewVoice(self):
 		# in the voice table create a new voice and return its index.

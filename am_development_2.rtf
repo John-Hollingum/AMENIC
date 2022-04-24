@@ -1,0 +1,56 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2513
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww10800\viewh14000\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 accel\
+===\
+\
+as s = ut +(at^2)/2\
+\
+We need to know u ( initial velocity) t time a acceleration\
+that gives us S displacement, but we also need to know initial value. We also need to say whether s is displacement from max or from min. That\'92s separate from whether a is negative\
+\
+probably it\'92s OK to use omin as start pos and omax as some kind of output scaling. time period would indicate u in some way. Secondary time could iindicate acceleration. So still enough data. maybe. what if we decide to base u on input velocity? wouldn\'92t that mean the normal imin, imax, omin, imax all to handle u? then where would \
+\
+what next? \
+Dirty flag?\
+Time Raster?\
+Mod wheel, pitch bend, sustain pedal support?\
+Something other than nflat for image selection?\
+Polyphonic?\
+Smear?\
+\
+Let\'92s go:\
+\
+Dirty\
+Accel\
+Note-based raster -a simple mod to sweep\
+Bar-based raster\
+Advanced image selection \
+\
+What should cause dirty?\
+\
+Start of a recording\
+Clearing a channel\
+Assigning a voice to a channel/layer\
+Creating a new voice\
+Editing a voice\
+Importing a voice\
+Importing Audio\
+Importing midi\
+\
+Is there a minimum of stuff that can be saved? if you just import audio and save, does that load OK?\
+\
+There\'92s a method inside amenicmain called setclean. Any routine that uses that would have to be passed the amenicmain instance. But that would be a classic case of objectizing a natural global. We could either make the flag and routine external to amenicmain or, probably more sensibly make the only instance of amenicmain (main) a global and access it directly. NAH, just use signals\
+\
+Is it currently a global, or is its scope onty the block at the end??\
+\
+Need a heirarchy of dirty flags and setcleans. For example, a dirty path will make a dirty voice, but only if that voice is saved, does the project become dirty\
+\
+\
+\
+\
+}
