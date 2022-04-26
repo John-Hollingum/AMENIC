@@ -71,7 +71,7 @@ audioFile = ''
 listenChannel = None
 inPortName = None
 totalTicks = 0
-PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble","avwobble"]
+PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble","avwobble","vaccel"]
 FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
 yauto = False
 bpm = None
@@ -699,7 +699,7 @@ class ipath():
 			self.data['imin'] = 21
 			self.data['imax'] = 108
 
-		if pt in ['vflat', 'vfall', 'vwobble','avwobble']:
+		if pt in ['vflat', 'vfall', 'vwobble','avwobble','vaccel']:
 			self.data['imin'] = 0
 			self.data['imax'] = 127
 
@@ -714,7 +714,7 @@ class ipath():
 
 	def calcScaling(self):
 		orange = int(self.data['omax']) - self.data['omin'] + 1
-		if self.data['ptype'] in ['vflat', 'vfall', 'nflat','nfall']:
+		if self.data['ptype'] in ['vflat', 'vfall', 'nflat','nfall','vaccel']:
 			irange = self.data['imax'] - self.data['imin'] + 1
 			self.data['scaling'] = orange / irange
 		if self.data['ptype'] in ['sweep', 'avwobble']:
@@ -722,7 +722,7 @@ class ipath():
 		if self.data['ptype'] in ['vwobble', 'avwobble']:
 			self.data['centre'] = ( self.data['omin'] + self.data['omax']) / 2
 			self.data['maxamp'] = orange
-		if self.data['ptype'] == 'avwobble':
+		if self.data['ptype'] in ['avwobble','vaccel']:
 			self.data['scaling2'] = orange / self.data['ts2']
 
 	def calcTop(self):
@@ -830,6 +830,20 @@ class ipath():
 			#print("Radius: "+ str(radius))
 			val = self.data['centre'] + math.sin(angle) * radius
 			return self.present(self.data['usedfor'],val)
+
+		if self.data['ptype'] == 'vaccel':
+			# s = ut +(at^2)/2
+			# u is initial velocity which will be scaled from midi velocity. Somehow
+			# t is just e . a is the acceleration derived from t2. Somehow
+			# all of which gives us s (displacement) which is what we're after
+			# as per vflat, initial velocity is:
+			u = (velocity - self.data['imin']) * self.data['scaling'] + self.data['omin']
+			a = self.data['scaling2'] # that's at least got to be kind of proportional to acceleration
+			s = int(u * e + (a * e ** 2)/2)
+			if s <0:
+				s = 0
+			print("scaling = "+str(self.data['scaling'])+" scaling2 = "+str(self.data['scaling2'])+" u = "+str(u)+" a = "+str(a)+" s = "+str(s))
+			return self.present(self.data['usedfor'],s)
 
 def cvLayers(layers):
 	baseImg = blackImg.copy()
@@ -1572,10 +1586,10 @@ class pathEdit(QDialog):
 		self.forLabel.setTextFormat(1)
 		self.forLabel.setText("<big>Parameters for <b>"+forUse+"</b> Path type <b>"+ptype+"</b></big>")
 
-		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble",'avwobble']
+		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble",'avwobble','vaccel']
 
-		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble", 'avwobble']
-		self.useSecondaryTime = ptype in [ "avwobble", "accel" ]
+		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble", 'avwobble','vaccel']
+		self.useSecondaryTime = ptype in [ "avwobble", "vaccel" ]
 
 		timeLower = 1 / fRate # not much point (I *think*) in allowing a time period less than the frame rate
 		timeUpper = 20        # I can't see (for the moment) wanting any effect to take longer than 20 seconds. Mostly
@@ -1596,7 +1610,7 @@ class pathEdit(QDialog):
 		if self.scaledFromInput:
 			if ptype in [ "nflat", "nfall"]:
 				iscalecaption = "As Note varies from "
-			if ptype in ["vflat","vfall","vwobble","avwobble"]:
+			if ptype in ["vflat","vfall","vwobble","avwobble","vaccel"]:
 				iscalecaption = "As velocity varies from "
 
 		if self.scaledFromInput or self.scaledFromTime:
@@ -1700,6 +1714,8 @@ class pathEdit(QDialog):
 			if self.useSecondaryTime:
 				if ptype == 'avwobble':
 					self.t2Label = QLabel("Attenuate to 0 amplitude after")
+				elif ptype == 'vaccel':
+					self.t2Label = QLabel("Accelerate period (he says vaguely)")
 				else:
 					self.t2Label = QLabel("some generic time 2 thing")
 				self.tUnits2 = QLineEdit()
@@ -1717,8 +1733,6 @@ class pathEdit(QDialog):
 				timeVBox.addLayout(time2HBox)
 
 			self.timeGBox.setLayout(timeVBox)
-
-
 
 		if ptype == "fixed":
 			self.omin = self.myPath.data["omin"]

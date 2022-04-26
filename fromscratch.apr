@@ -75,6 +75,87 @@
     "scaling": 0.7890625,
     "top": 100
    }
+  },
+  "Whizz": {
+   "imgTable": [
+    [
+     -1,
+     "/Users/johnhollingum/Documents/AMENIC/red-ledon-th.png"
+    ]
+   ],
+   "xpos": {
+    "ptype": "sweep",
+    "timestep": 2.0,
+    "imin": 0,
+    "imax": 127,
+    "omin": 0,
+    "omax": 960,
+    "ts2": 0,
+    "invert": false,
+    "usedfor": "xpos",
+    "maintar": true,
+    "scaling": 480.5,
+    "native": null,
+    "scaling2": -480.5
+   },
+   "ypos": {
+    "ptype": "vaccel",
+    "timestep": 0.3,
+    "imin": 0,
+    "imax": 127,
+    "omin": 0,
+    "omax": 540,
+    "ts2": -1.0,
+    "invert": true,
+    "usedfor": "ypos",
+    "maintar": true,
+    "scaling": 4.2265625,
+    "native": null,
+    "scaling2": -541.0,
+    "top": 540
+   },
+   "xsize": {
+    "ptype": "fixed",
+    "timestep": 0.5,
+    "imin": null,
+    "imax": null,
+    "omin": 0,
+    "omax": 960,
+    "ts2": 2,
+    "invert": false,
+    "usedfor": "xsize",
+    "maintar": true,
+    "scaling": null,
+    "native": true
+   },
+   "ysize": {
+    "ptype": "fixed",
+    "timestep": 0.5,
+    "imin": null,
+    "imax": null,
+    "omin": 0,
+    "omax": 540,
+    "ts2": 2,
+    "invert": false,
+    "usedfor": "ysize",
+    "maintar": true,
+    "scaling": null,
+    "native": null
+   },
+   "opacity": {
+    "ptype": "fixed",
+    "timestep": 0.5,
+    "imin": null,
+    "imax": null,
+    "omin": 100,
+    "omax": 100,
+    "ts2": 2,
+    "invert": false,
+    "usedfor": "opacity",
+    "maintar": true,
+    "scaling": null,
+    "native": null
+   }
   }
  },
  "cvmap": [
@@ -84,7 +165,7 @@
   ],
   [
    2,
-   "<none>"
+   "Whizz"
   ],
   [
    3,

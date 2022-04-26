@@ -3,6 +3,9 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 import sys
 
+mods = [m.__name__ for m in sys.modules.values() if m]
+print(mods)
+
 class AmenicMain(QMainWindow):
 	def __init__(self):
 		super().__init__()
@@ -27,6 +30,8 @@ class AmenicMain(QMainWindow):
 		container.setLayout(hbox2)
 
 		self.setCentralWidget(container)
+
+
 
 
 if __name__ == '__main__':
