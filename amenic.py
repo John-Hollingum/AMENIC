@@ -41,13 +41,7 @@ wavePixmap = None
 chanPixmaps = []
 chanMuted = []
 perfPlayable = False
-amenicDir = "/Users/johnhollingum/Documents/AMENIC"
-loglevel = 3
-orchPath = "./"
-orchName = "Untitled"
-oExtn = 'orc'
 vExtn = 'vcf'
-projPath = "./"
 projName = "Untitled"
 pExtn = 'apr'
 cleanProj = True
@@ -59,8 +53,7 @@ tHeight = 540
 mainWindowX = tWidth + 24
 mainWindowY = 560
 layerWindowX = 1020
-fRate = 24
-#fRate = 12
+fRate = 24 # a 'super default'. This will get set to the setup frate and possibly a project frate
 ecount=0
 emptyImg = None
 blackImg = None
@@ -76,6 +69,86 @@ FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
 yauto = False
 bpm = None
 iimf = 'c' # internal image manipulation format, q for qpixmap, c for cv
+setup = dict()
+
+def toJsonFile(data,fn):
+	saveData = json.dumps(data, indent = 1)
+	fh = open(fn,"w")
+	fh.write(saveData)
+	fh.close()
+
+
+def fromJsonFile(fname):
+	#print("opening "+fname)
+	fh = open(fname,'r')
+	loadData = fh.read()
+	fh.close()
+	if loadData == None:
+		print("for some reason, there's no loaddata")
+		quit()
+	#else:
+	#	print("===")
+	#	print(loadData)
+	#	print("===")
+
+	return json.loads(loadData)
+
+def getAmenicDir():
+	global amenicDir
+	global amSetup
+
+	if not "AMENICDIR" in os.environ:
+		# say where it is in my dev system
+		amenicDir = "/Users/johnhollingum/Documents/AMENIC"
+	else:
+		amenicDir = os.environ['AMENICDIR']
+	amSetup = amenicDir +'/'+ 'amenicSetup.json'
+
+def setupDefaults():
+	global setup
+
+	setup['loglevel'] = 3
+	setup['frate'] = 24
+	setup['projpath'] = "~/Movies/Amenic"
+	setup['preferredmidiinput'] = '<none>'
+	setup['voicespath'] = setup['projpath']+"/Voices"
+
+def loadSetup():
+	global setup
+	global fRate, inPortName,loglevel, projPath, voicesPath
+
+	getAmenicDir()
+	if not os.path.exists(amSetup):
+		setupDefaults()
+		saveSetup()
+	else:
+		setup = fromJsonFile(amSetup)
+
+	# use setup to set some 'session defaults'. These may well be overridden by per-project values
+	# so in most cases, it's not appropriate to access setup values directly
+	fRate = setup['frate']
+	# indicating home dir with a ~ is a shell thing, so expand any ref to it in home projpath
+	hd = os.environ['HOME']
+	pp = setup['projpath']
+	expPath = re.sub('~',hd,pp)
+	print('Project path is '+expPath)
+	if not os.path.isdir(expPath):
+		os.mkdir(expPath)
+	vp = setup['voicespath']
+	expVp = re.sub('~',hd,vp)
+	if not os.path.isdir(expVp):
+		os.mkdir(expVp)
+	projPath = expPath
+	voicesPath = expVp
+	if setup['preferredmidiinput'] == "<none>":
+		inPortName = None
+	else:
+		inPortName = setup['preferredmidiinput']
+	loglevel = setup['loglevel']
+
+def saveSetup():
+	global setup
+	toJsonFile(setup,amSetup)
 
 # bunch of general utility functions
 def MakeWaveform(in_file, out_file):
@@ -1358,6 +1431,7 @@ class TableModel(QAbstractTableModel):
 class voice():
 
 	def sd(self):
+		#mess('voice object set dirty')
 		self.isClean = False
 
 	def __init__(self):
@@ -1485,7 +1559,10 @@ class PEButton(QPushButton):
 		self.pe = pathEdit(self.myPath)
 		self.pe.exec_()
 		if not self.pe.isClean:
+			#mess("emitting signal")
 			self.changedPath.emit()
+		#else:
+		#	mess("no need to emit signal")
 
 # possibly obsolete slider control
 class vSlide(QSlider):
@@ -1890,28 +1967,24 @@ class CVMapEdit(QDialog):
 		global performance
 
 		trackName = "forChan"+str(idx -1)
-		trackIndex = 0
-		found = False
-		for t in performance.tracks:
-			if performance.tracks[trackIndex].name == trackName:
-				found = True
-				toDelete = trackIndex
-				break
-			trackIndex += 1
-		if not found:
-			err("can't find index for track named '"+trackName+"'")
-		else:
-			self.sd()
-			del performance.tracks[toDelete]
-			tl = self.cvm.indexWidget(self.model.index(idx,5))
-			tl.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
-			chanPixmaps[idx-1][0] = blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy()
-			chanPixmaps[idx -1][1] = True
-			cb = self.cvm.indexWidget(self.model.index(idx,3))
-			cb.setEnabled(False)
-			lc = self.cvm.indexWidget(self.model.index(idx,2))
-			lc.setEnabled(True)
-			checkVidGen(self.mw)
+		for i in range(len(performance.tracks)-1, 0, -1):
+			if performance.tracks[i].name == trackName:
+				print("deleting track with index "+str(i))
+				del performance.tracks[i]
+				# we seem to have a problem with multiple forchan0 tracks being created.
+				# I don't think this is the right place to fix it, but let's not break
+				# here, but let it splat several
+				# break
+		self.sd()
+		tl = self.cvm.indexWidget(self.model.index(idx,5))
+		tl.setPixmap(cleanPixmap.scaled(timeLineWidth,timeLineHeight,0,1))
+		chanPixmaps[idx-1][0] = blackImgQ.scaled(timeLineWidth,timeLineHeight,0,1).copy()
+		chanPixmaps[idx -1][1] = True
+		cb = self.cvm.indexWidget(self.model.index(idx,3))
+		cb.setEnabled(False)
+		lc = self.cvm.indexWidget(self.model.index(idx,2))
+		lc.setEnabled(True)
+		checkVidGen(self.mw)
 
 	def comboAdd(self,idx):
 		global wavePixmap
@@ -2082,9 +2155,13 @@ class vEditD(QDialog):
 	def setClean(self,clean):
 		self.isClean = clean
 		self.btnSave.setEnabled(not self.isClean)
+		if not self.isClean:
+			self.changedVoice.emit()
 
 	def sd(self):
+		#mess('Sd for veditd called')
 		self.setClean(False)
+		#mess('isClean = '+str(self.isClean))
 
 	def resumeTimer(self):
 		# flush out any midi events that may have come in while we were dealing with the event
@@ -2595,26 +2672,51 @@ class AmenicMain(QMainWindow):
 		self.emptyProj()
 		self.startImg()
 
+	def projFromFn(self,fn):
+		pn = os.path.basename(fn)
+		pn = re.sub('.apr$','',pn)
+		return pn
+
 	def openProj(self):
 		global audioFile
 		global performanceFile
 		global iimf
 		global wavePixmap
 		global projName
+		global cleanProj
 
 		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Project File', projPath,"Amenic Project files (*.apr)")
 		if fname == '':
 			return
+		if projName != None:
+			if not cleanProj:
+				npn = self.projFromFn(fname)
+				if npn == projName:
+					# ok to revert npn to saved
+					qm = QMessageBox()
+					resp = qm.question(self,'', "OK to revert project "+projName+ " to saved version?", qm.Yes | qm.No )
+					if resp == qm.Yes:
+						pass
+					else:
+						return
+				else:
+					# save projname first?
+					qm = QMessageBox()
+					resp = qm.question(self,'', "Save project "+projName+ " first?", qm.Yes | qm.No )
+					if resp == qm.Yes:
+						self.saveProj()
+					else:
+						pass
+		self.emptyProj()
+		self.startImg()
 		self.loading = True
-		fh = open(fname,'r')
-		loadData = fh.read()
-		fh.close()
-		proj = json.loads(loadData)
+		proj = fromJsonFile(fname)
+
 		voices.clear() # DON'T do voices = [] as that declares a local voices!
 		CVMap.clear()
 		self.setClean(True)
-		projName = os.path.basename(fname)
-		projName = re.sub('.apr$','',projName)
+		projName = self.projFromFn(fname)
+
 		self.setWindowTitle('Amenic - '+fname)
 
 		for vname in proj["voices"]:
@@ -2683,10 +2785,7 @@ class AmenicMain(QMainWindow):
 		proj["midifile"] = performanceFile
 		performance.save(performanceFile)
 
-		saveData = json.dumps(proj, indent = 1)
-		fh = open(projFileName,"w")
-		fh.write(saveData)
-		fh.close()
+		toJsonFile(proj,projFileName)
 		self.setClean(True)
 		self.setGotProjName(True)
 
@@ -2707,7 +2806,7 @@ class AmenicMain(QMainWindow):
 		fh.close()
 
 	def importVoice(self):
-		( avcIn, filter ) = QFileDialog.getOpenFileName(self,"Import from Amenic voice file",'./',"Avc files (*.avc)")
+		( avcIn, filter ) = QFileDialog.getOpenFileName(self,"Import from Amenic voice file",voicesPath,"Avc files (*.avc)")
 		if avcIn == '':
 			return
 		vfname = os.path.basename(avcIn)
@@ -2958,7 +3057,9 @@ class AmenicMain(QMainWindow):
 		global fRate
 		global performance
 		global perfPlayable
+		global lastMsgTime
 
+		lastMsgTime = None
 		self.stopFlag = False
 		# this shouldn't happen, but:
 		if performance == None and audioFile == '':
@@ -3069,10 +3170,13 @@ class AmenicMain(QMainWindow):
 		v = voice()
 		v.edit()
 		if not v.isClean:
+			#mess('voice seems to be dirty')
 			voices.append(v)
 			self.edComboInit()
 			self.setGotVoices(True)
 			self.setClean(False)
+		#else:
+		#	mess('voice seems to be clean')
 
 	def startImg(self):
 		global emptyImg
@@ -3299,6 +3403,8 @@ class AmenicMain(QMainWindow):
 					#mess("Panic, no stored voice with name"+self.edCombo.currentText())
 			else:
 				edv.edit()
+				if not edv.isClean:
+					self.sd()
 				vn = edv.vdata["name"]
 				if vn == "Untitled" or vn == '' or vn == None:
 					# mess("looks like you cancelled out")
@@ -3344,8 +3450,11 @@ class AmenicMain(QMainWindow):
 		if perfPlayable:
 			self.p.stop() # stops midfile player
 			if listenChannel != None:
-				print("according to tickCount, last midi message was at "+str(totalTicks * tickDuration / 1000000 ))
-				print("according to rtc, it was at "+str(lastMsgTime-self.firstEventTime))
+				if lastMsgTime == None:
+					print('No midi data recorded')
+				else:
+					print("according to tickCount, last midi message was at "+str(totalTicks * tickDuration / 1000000 ))
+					print("according to rtc, it was at "+str(lastMsgTime-self.firstEventTime))
 
 		mixer.stop()
 		mixer.quit() # just stop doesn't work. quit leaves it in an unplayable state so:
@@ -3368,6 +3477,7 @@ class AmenicMain(QMainWindow):
 		self.startImg()
 
 if __name__ == '__main__':
+	loadSetup()
 	app = QApplication(sys.argv)
 	main = AmenicMain()
 	main.show()
