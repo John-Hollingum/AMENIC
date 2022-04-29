@@ -2,6 +2,9 @@
  "loglevel": 3,
  "frate": 24,
  "projpath": "~/Movies/Amenic",
- "preferredmidiinput": "<none>",
- "voicespath": "~/Movies/Amenic/Voices"
+ "preferredmidiinput": "V49 MKII V49",
+ "voicespath": "~/Movies/Amenic/Voices",
+ "lastaudiosource": "/Users/johnhollingum/Documents/sounds",
+ "lastimagesource": "/Users/johnhollingum/Documents/Turnips",
+ "lastmidisource": "/Users/johnhollingum/Documents/sounds/Raw_midi"
 }

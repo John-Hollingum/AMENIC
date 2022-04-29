@@ -112,6 +112,9 @@ def setupDefaults():
 	setup['projpath'] = "~/Movies/Amenic"
 	setup['preferredmidiinput'] = '<none>'
 	setup['voicespath'] = setup['projpath']+"/Voices"
+	setup['lastaudiosource'] = setup['projpath']
+	setup['lastimagesource'] = setup['projpath']
+	setup['lastmidisource'] = setup['projpath']
 
 def loadSetup():
 	global setup
@@ -144,11 +147,21 @@ def loadSetup():
 		inPortName = None
 	else:
 		inPortName = setup['preferredmidiinput']
+		# really should check this is still valid !!!
 	loglevel = setup['loglevel']
 
 def saveSetup():
 	global setup
 	toJsonFile(setup,amSetup)
+
+def checkSetupChange(name,value):
+	#print('setting '+name+' to '+str(value))
+	setup[name] = value
+	# if there is currently no project, save this change to the setup file,
+	# otherwise leave it to possibly get saved with the project
+	if projName == 'Untitled':
+		#print('updating setup file')
+		saveSetup()
 
 # bunch of general utility functions
 def MakeWaveform(in_file, out_file):
@@ -2183,14 +2196,22 @@ class vEditD(QDialog):
 
 	def getImg(self,idx):
 		self.midiTimer.stop()
-		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Image files (*.png *.jpg *.jpeg)")
-		self.model._data[idx][3] = fname
+		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open file', setup['lastimagesource'],"Image files (*.png *.jpg *.jpeg)")
+		if fname != '':
+			self.model._data[idx][3] = fname
+			setup['lastimagesource'] = os.path.dirname(fname)
+			checkSetupChange('lastimagesource',setup['lastimagesource'])
+			self.sd()
 		self.resumeTimer()
 
 	def getDefImg(self,idx):
 		self.midiTimer.stop()
-		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Default Image', '~/Documents',"Image files (*.png *.jpg *.jpeg)")
-		self.diEdit.setText(fname)
+		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Default Image',setup['lastimagesource'],"Image files (*.png *.jpg *.jpeg)")
+		if fname != '':
+			self.sd()
+			setup['lastimagesource'] = os.path.dirname(fname)
+			checkSetupChange('lastimagesource',setup['lastimagesource'])
+			self.diEdit.setText(fname)
 		self.resumeTimer()
 
 	def imgt(self,v,n):
@@ -2201,8 +2222,12 @@ class vEditD(QDialog):
 
 	def getRestImg(self,idx):
 		self.midiTimer.stop()
-		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Rest Image', '~/Documents',"Image files (*.png *.jpg *.jpeg)")
-		self.restEdit.setText(fname)
+		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Rest Image', setup['lastimagesource'],"Image files (*.png *.jpg *.jpeg)")
+		if fname != '':
+			self.sd()
+			setup['lastimagesource'] = os.path.dirname(fname)
+			checkSetupChange('lastimagesource',setup['lastimagesource'])
+			self.restEdit.setText(fname)
 		self.resumeTimer()
 
 	def noteRowAdd(self,idx):
@@ -2247,12 +2272,19 @@ class vEditD(QDialog):
 			self.midiTimer.timeout.connect(self.checkMidi)
 			self.midiTimer.start(50)
 
+	def onRowChange(self,item):
+		row = item.row()
+		if self.model._data[row][3] != None:
+			# I'm sure it's cached somewhere, but for now:
+			self.pvPath.setText(self.model._data[row][3])
+			self.pv.setPixmap(QPixmap(self.model._data[row][3]).scaled(self.PVWidth,self.PVHeight,2,1))
+
 	def initUI(self, v:voice):
 		global maintainAR
 		global inPortName
 
 		self.setWindowTitle('Edit Voice')
-		self.resize(800,600)
+		self.resize(1000,600)
 		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
 
 		self.isClean = True # don't use setclean at this stage as the objects it references aren't yet instantiated
@@ -2334,6 +2366,8 @@ class vEditD(QDialog):
 		self.noteMap.setColumnWidth(1,80)
 		self.noteMap.setColumnWidth(3,240)
 
+		self.noteMap.clicked.connect(self.onRowChange)
+
 		self.btnCancel = QPushButton('Cancel')
 		self.btnCancel.clicked.connect(self.cancelOut)
 
@@ -2387,6 +2421,14 @@ class vEditD(QDialog):
 		self.opPCombo.currentTextChanged.connect(self.sd)
 		self.opE =PEButton(self.opP)
 		self.opE.changedPath.connect(self.sd)
+
+		previewLabel = QLabel("Image")
+		self.pv = QLabel()
+		self.pvPath = QLabel()
+		emptyPath = amenicDir+"/Empty.png"
+		self.PVWidth = 180
+		self.PVHeight = 180
+		self.pv.setPixmap(QPixmap(emptyPath).scaled(self.PVWidth,self.PVHeight,2,1))
 
 		# Layout
 		hboxouter = QHBoxLayout()
@@ -2466,6 +2508,13 @@ class vEditD(QDialog):
 		hboxouter.addLayout(vbox)
 		hboxouter.addLayout(vbox2)
 
+		vbox3 = QVBoxLayout()
+		vbox3.addWidget(previewLabel)
+		vbox3.addWidget(self.pvPath)
+		vbox3.addWidget(self.pv)
+
+		hboxouter.addLayout(vbox3)
+
 		self.setLayout(hboxouter)
 
 	def chName(self):
@@ -2510,10 +2559,10 @@ class vEditD(QDialog):
 
 		if restImgIdx == None and self.restEdit.text() != None and self.restEdit.text() != '':
 			# create new entry in imgTable for rest image
-			image = self.imgNamed(self.resEdit.text())
+			image = self.imgNamed(self.restEdit.text())
 			self.model._data.append([-2,None,None,self.restEdit.text(),image])
 		elif restImgIdx != None:
-			image = self.imgNamed(self.resEdit.text())
+			image = self.imgNamed(self.restEdit.text())
 			self.model._data[restImgIdx] = [-2,None,None,self.restEdit.text(),image]
 
 		self.myv.vdata["imgTable"] = []
@@ -2541,11 +2590,13 @@ class AmenicMain(QMainWindow):
 		icon = QIcon()
 		icon.addPixmap(QPixmap("AmenicIcon.png"), QIcon.Selected, QIcon.On)
 		self.setWindowIcon(icon)
-		self.initUI()
 		self.vtable = []
 		self.loading = False
 		self.lastMess = None
 		self.lastPerfMess = None
+		self.setupTime = True
+		self.initUI()
+		self.setupTime = False
 
 	def setGotAudio(self,gotAudio):
 		self.setPlayable(gotAudio)
@@ -2571,7 +2622,8 @@ class AmenicMain(QMainWindow):
 	def setGotProjName(self,gotProjName):
 		global cleanProj
 
-		self.savePAct.setEnabled(gotProjName and not cleanProj)
+		#self.savePAct.setEnabled(gotProjName and not cleanProj)
+		self.savePAct.setEnabled(not cleanProj)
 
 	def setCanGenVid(self,canGen):
 		self.expVidAct.setEnabled(canGen)
@@ -2596,7 +2648,8 @@ class AmenicMain(QMainWindow):
 		global projName
 
 		gotProjName = ( projName != 'Untitled')
-		self.savePAct.setEnabled((not clean) and gotProjName)
+		#self.savePAct.setEnabled((not clean) and gotProjName)
+		self.savePAct.setEnabled((not clean))
 		self.dirtyCheck.setChecked(not clean)
 		cleanProj = clean
 
@@ -2669,6 +2722,7 @@ class AmenicMain(QMainWindow):
 		if not cleanProj:
 			if not self.checkSave():
 				return
+		loadSetup() # revert to general setup, not any proj-specific setup
 		self.emptyProj()
 		self.startImg()
 
@@ -2684,6 +2738,8 @@ class AmenicMain(QMainWindow):
 		global wavePixmap
 		global projName
 		global cleanProj
+		global setup
+		global inPortName
 
 		( fname, filter)  = QFileDialog.getOpenFileName(self, 'Open Project File', projPath,"Amenic Project files (*.apr)")
 		if fname == '':
@@ -2738,6 +2794,11 @@ class AmenicMain(QMainWindow):
 		performanceFile = proj["midifile"]
 		self.setMidi(proj["midifile"])
 
+		if 'projsetup' in proj.keys():
+			setup = proj['projsetup']
+		inPortName = setup['preferredmidiinput']
+		self.inPortInit()
+
 		self.edComboInit()
 		self.loading = False
 		self.setGotAudio(True)
@@ -2746,7 +2807,7 @@ class AmenicMain(QMainWindow):
 		self.checkPerfPlayable(True)
 
 	def genVid(self):
-		n = projPath + projName + ".mp4"
+		n = projPath + '/'+ projName + ".mp4"
 		( mp4out, filter ) = QFileDialog.getSaveFileName(self,"Export to MP4",n,"MPEG-4 files (*.mp4)")
 		if mp4out == '':
 			return
@@ -2758,6 +2819,10 @@ class AmenicMain(QMainWindow):
 
 	def saveProj(self,saveAs = False):
 		global performanceFile
+		global projName
+		global setup
+
+		firstSave = (projName == "Untitled")
 		proj = dict()
 		proj["voices"]= dict()
 		for v in voices:
@@ -2769,10 +2834,10 @@ class AmenicMain(QMainWindow):
 			proj["cvmap"].append(map)
 
 		proj["audiofile"] = audioFile
+		proj["projsetup"] = setup
 
-
-		n = projPath + projName + "."+pExtn
-		if saveAs:
+		n = projPath +'/'+ projName + "."+pExtn
+		if saveAs or firstSave:
 			( projFileName, filter ) = QFileDialog.getSaveFileName(self,"Save Project File",n,"Amenic Project (*.apr)")
 			if projFileName == '':
 				return
@@ -2780,8 +2845,12 @@ class AmenicMain(QMainWindow):
 			# directory or zipfile covering images too, but just saving the midi under the new project name should do
 		else:
 			projFileName = n
-		if performanceFile == '' or saveAs:
+		if performanceFile == '' or saveAs or firstSave:
 			performanceFile = re.sub('.'+pExtn+'$','.apf',projFileName)
+
+		if firstSave:
+			projName = self.projFromFn(projFileName)
+			self.setWindowTitle('Amenic - '+projFileName)
 		proj["midifile"] = performanceFile
 		performance.save(performanceFile)
 
@@ -2865,12 +2934,15 @@ class AmenicMain(QMainWindow):
 	def importAudio(self):
 		global audioFile
 
-		( audioFile, filter)  = QFileDialog.getOpenFileName(self, 'Open file', '~/Documents',"Sound files (*.mp3)")
-		self.setAudio()
-		self.setWaveform(audioFile)
-		self.setClean(False)
-		self.setGotAudio(True)
-		self.setPlayable(True) # in a limited sort of way
+		( audioFile, filter)  = QFileDialog.getOpenFileName(self, 'Open file', setup['lastaudiosource'],"Sound files (*.mp3)")
+		if audioFile != '':
+			setup['lastaudiosource'] = os.path.dirname(audioFile)
+			checkSetupChange('lastaudiosource',setup['lastaudiosource'])
+			self.setAudio()
+			self.setWaveform(audioFile)
+			self.setClean(False)
+			self.setGotAudio(True)
+			self.setPlayable(True) # in a limited sort of way
 
 	def convertPerformance(self):
 		global performance
@@ -2905,6 +2977,7 @@ class AmenicMain(QMainWindow):
 				err('Too complicated: multiple tracks with events for channel '+str(chans[0]))
 				return False
 			track.name = "forChan"+str(chans[0])
+		return True
 
 	def checkPerfPlayable(self,loadTime):
 		global CVMap, chanMuted
@@ -2932,11 +3005,14 @@ class AmenicMain(QMainWindow):
 		global CVMap
 		global chanMuted
 
+		gotFile = False
 		if performanceFile != '':
-
+			gotFile = True
 			performance = MidiFile(performanceFile)
 			if imported:
-				self.convertPerformance()
+				gotFile = self.convertPerformance()
+
+		if gotFile:
 			self.setPlayable(True)
 			self.mpFileShow.setText(performanceFile)
 			midiTiming(performance) # this actually extracts info from the file
@@ -2959,9 +3035,12 @@ class AmenicMain(QMainWindow):
 				pass
 			else:
 				return
-		(performanceFile, filter) = QFileDialog.getOpenFileName(self,'Open Midi File','./',"Midi files (*.mid *.MID)")
-		self.setMidi(performanceFile, True)
-		self.setClean(False)
+		(performanceFile, filter) = QFileDialog.getOpenFileName(self,'Open Midi File',setup['lastmidisource'],"Midi files (*.mid *.MID)")
+		if performanceFile != '':
+			setup['lastmidisource'] = os.path.dirname(performanceFile)
+			checkSetupChange('lastmidisource',setup['lastmidisource'])
+			self.setMidi(performanceFile, True)
+			self.setClean(False)
 
 	def playslot(self):
 		# this pushes out the events in the performance in (roughly) the right timing
@@ -3012,7 +3091,6 @@ class AmenicMain(QMainWindow):
 		global board
 		global listenChannel
 
-
 		self.livePerfTimer.stop()
 
 		if self.stopFlag:
@@ -3049,6 +3127,11 @@ class AmenicMain(QMainWindow):
 
 		if inPortName != None:
 			self.inport = mido.open_input(inPortName)
+			if not self.setupTime:
+				checkSetupChange('preferredmidiinput',inPortName)
+		else:
+			if not self.setupTime:
+				checkSetupChange('preferredmidiinput',"<none>")
 
 	def play(self):
 		global CVMap
@@ -3293,11 +3376,15 @@ class AmenicMain(QMainWindow):
 		self.edCombo = QComboBox(self)
 		self.edComboInit()
 		self.edCombo.currentIndexChanged.connect(self.edSelChg)
+
 		self.edCombo.setEnabled(False)
 
 		self.inPortCombo = QComboBox(self)
 		self.inPortInit()
-		self.inPortCombo.currentIndexChanged.connect(self.inPortChg)
+		# don't want to trigger inPortChg at setup time, so use activated
+		# which happens on user action only
+		#self.inPortCombo.currentIndexChanged.connect(self.inPortChg)
+		self.inPortCombo.activated.connect(self.inPortChg)
 
 		self.dirtyCheck = QCheckBox()
 		self.dirtyCheck.setTristate(False)
@@ -3423,6 +3510,7 @@ class AmenicMain(QMainWindow):
 			self.inPortName = None
 		else:
 			inPortName = self.inPortCombo.currentText()
+		self.setInport()
 
 	def createNewVoice(self):
 		# in the voice table create a new voice and return its index.
