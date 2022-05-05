@@ -64,7 +64,7 @@ audioFile = ''
 listenChannel = None
 inPortName = None
 totalTicks = 0
-PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble","avwobble","vaccel"]
+PTList = [ "fixed", "nflat", "vflat","sweep", "nfall", "vfall", "vwobble","avwobble", "vaccel"]
 FUList = [ "xpos", "ypos", "xsize","ysize","opacity"]
 yauto = False
 bpm = None
@@ -251,9 +251,30 @@ def overlay_transparent(background, overlay, x, y):
 		w = background_width - x
 		overlay = overlay[:, :w]
 
+	# does it go beyond bounds in the other direction?
+	if x + w < 0:
+		return background # oos
+	if x < 0:
+		nw = x + w
+		ns = w - nw
+		x = 0
+		w = nw
+		# trim down overlay to width nw from the right
+		overlay = overlay[:,ns:]
+
 	if y + h > background_height:
 		h = background_height - y
 		overlay = overlay[:h]
+
+	if y + h < 0:
+		return background # oos
+	if y < 0:
+		nh = y + h
+		ns = h - nh
+		y = 0
+		h = nh
+		# trim overlay height to nh from the bottom
+		overlay = overlay [ns:]
 
 	# if the overlay image doesn't have a transparency channel
 	# construct one for it, but bear in mind that for jpegs, this will
@@ -789,6 +810,11 @@ class ipath():
 			self.data['imin'] = 0
 			self.data['imax'] = 127
 
+		if pt == 'vaccel':
+			self.data['ival'] = int((self.data['omax'] + self.data['omin'])/2)
+			self.data['scaling'] = 5
+			self.data['scaling2'] = -2
+
 		self.data['invert'] = False
 		self.calcScaling()
 		self.calcTop()
@@ -800,7 +826,7 @@ class ipath():
 
 	def calcScaling(self):
 		orange = int(self.data['omax']) - self.data['omin'] + 1
-		if self.data['ptype'] in ['vflat', 'vfall', 'nflat','nfall','vaccel']:
+		if self.data['ptype'] in ['vflat', 'vfall', 'nflat','nfall']:
 			irange = self.data['imax'] - self.data['imin'] + 1
 			self.data['scaling'] = orange / irange
 		if self.data['ptype'] in ['sweep', 'avwobble']:
@@ -808,7 +834,7 @@ class ipath():
 		if self.data['ptype'] in ['vwobble', 'avwobble']:
 			self.data['centre'] = ( self.data['omin'] + self.data['omax']) / 2
 			self.data['maxamp'] = orange
-		if self.data['ptype'] in ['avwobble','vaccel']:
+		if self.data['ptype'] in ['avwobble']:
 			self.data['scaling2'] = orange / self.data['ts2']
 
 	def calcTop(self):
@@ -918,17 +944,11 @@ class ipath():
 			return self.present(self.data['usedfor'],val)
 
 		if self.data['ptype'] == 'vaccel':
-			# s = ut +(at^2)/2
-			# u is initial velocity which will be scaled from midi velocity. Somehow
-			# t is just e . a is the acceleration derived from t2. Somehow
-			# all of which gives us s (displacement) which is what we're after
-			# as per vflat, initial velocity is:
-			u = (velocity - self.data['imin']) * self.data['scaling'] + self.data['omin']
-			a = self.data['scaling2'] # that's at least got to be kind of proportional to acceleration
-			s = int(u * e + (a * e ** 2)/2)
-			if s <0:
-				s = 0
-			print("scaling = "+str(self.data['scaling'])+" scaling2 = "+str(self.data['scaling2'])+" u = "+str(u)+" a = "+str(a)+" s = "+str(s))
+			# s = ut + (at^2)/2
+			# u = note velocity * scaling
+			# a = scaling2
+			# t = e
+			s = self.data['ival'] + int(velocity * self.data['scaling'] * e + ( self.data['scaling2'] * e ** 2)/2)
 			return self.present(self.data['usedfor'],s)
 
 def cvLayers(layers):
@@ -1108,7 +1128,7 @@ class soundBoard():
 # takes midi events from the midifile and sends them to the board.
 
 class player():
-	#pushes midi events out from a file onto the soundboard
+	#pushes midi events out from a 'file' onto the soundboard
 	def __init__(self,p,mainWind):
 		self.stopIt = False
 		self.pauseIt = False
@@ -1315,10 +1335,11 @@ class camera():
 			self.writer.write(blackImg)
 			return
 		layers = []
-		for ch in snap.keys():
-			#print("Trying to render for channel "+str(ch))
-			#print(snap[ch])
-			layers.append(self.render(ch,snap[ch],aTime))
+		for ch in range(0,15): # enforce correct order of layers
+			if ch in snap.keys():
+				#print("Trying to render for channel "+str(ch))
+				#print(snap[ch])
+				layers.append(self.render(ch,snap[ch],aTime))
 		self.merge(layers)
 
 	def exposure(self):
@@ -1331,10 +1352,11 @@ class camera():
 		layers = []
 		ecount += 1
 		#print("E "+str(ecount))
-		for ch in snap.keys():
-			#print("Trying to render for channel "+str(ch))
-			#print(snap[ch])
-			layers.append(self.render(ch,snap[ch]))
+		for ch in range(0,15):
+			if ch in snap.keys():
+				#print("Trying to render for channel "+str(ch)) # !!!
+				#print(snap[ch])
+				layers.append(self.render(ch,snap[ch]))
 		self.merge(layers)
 
 # the data model for the layers table which associates voices with midi channels or live performance data
@@ -1506,7 +1528,10 @@ class PCombo(QComboBox):
 		self.myPath.data['ptype'] = self.currentText()
 		self.myPath.setDefaults()
 		if not yauto:
-			pe = pathEdit(self.myPath)
+			if self.myPath.data['ptype'] == 'vaccel':
+				pe = accelPathEdit(self.myPath)
+			else:
+				pe = pathEdit(self.myPath)
 			pe.exec_()
 
 # special combo specifically for selecting the pathtype of xsize. It's special because it may also
@@ -1569,7 +1594,10 @@ class PEButton(QPushButton):
 		self.myPath = path
 
 	def eptype(self,idx):
-		self.pe = pathEdit(self.myPath)
+		if self.myPath.data['ptype'] == 'vaccel':
+			self.pe = accelPathEdit(self.myPath)
+		else:
+			self.pe = pathEdit(self.myPath)
 		self.pe.exec_()
 		if not self.pe.isClean:
 			#mess("emitting signal")
@@ -1577,22 +1605,135 @@ class PEButton(QPushButton):
 		#else:
 		#	mess("no need to emit signal")
 
-# possibly obsolete slider control
+# slider control for path controls
 class vSlide(QSlider):
-	def __init__(self,min,max,linkedLabel,current,parent):
+	def __init__(self,min,max,linkedLabel,current,isInt,parent):
 		super().__init__(Qt.Horizontal,parent)
-		self.setMinimum(min)
-		self.setMaximum(max)
-		self.setValue(current)
+		self.parent = parent
+		self.isInt = isInt
+		if self.isInt:
+			self.setMinimum(min)
+			self.setMaximum(max)
+			self.setValue(int(current))
+		else:
+			self.setMinimum(min * 100)
+			self.setMaximum(max * 100)
+			self.setValue(int(current * 100))
 		self.setGeometry(30, 40, 200, 30)
 		self.myLinkedLabel = linkedLabel
 		self.valueChanged[int].connect(self.updLabel)
 
 	def updLabel(self):
-		self.myLinkedLabel.setText(str(self.value()))
+		if self.isInt:
+			self.myLinkedLabel.setText(str(self.value()))
+		else:
+			self.myLinkedLabel.setText(str(self.value()/100))
+		self.parent.sd()
 
 	def getVal(self):
-		return self.value()
+		if self.isInt:
+			return self.value()
+		else:
+			return self.value() / 100
+
+class accelPathEdit(QDialog):
+	# it's just too different to be handled by the generic path editor
+	def __init__(self,path):
+		super().__init__()
+		self.setModal(True)
+		self.myPath = path
+		self.isClean = True
+		self.initUI()
+
+	def setClean(self,clean):
+		self.isClean = clean
+		self.btnSave.setEnabled(not self.isClean)
+
+	def sd(self):
+		self.setClean(False)
+
+	def cancelOut(self):
+		self.setClean(True)
+		self.reject()
+
+	def saveOut(self):
+		self.myPath.data['ival'] = self.initValSlide.getVal()
+		self.myPath.data['scaling'] = self.initVelSlide.getVal()
+		self.myPath.data['scaling2'] = self.accelSlide.getVal()
+		self.accept()
+
+	def initUI(self):
+		global bpm
+
+		self.setWindowTitle('Edit Attribute Path')
+		self.resize(400,400)
+		self.setWindowFlags(Qt.CustomizeWindowHint | Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.Tool)
+
+		# how we caption these and whether we show them at all will depend on ptype
+		forUse = self.myPath.data['usedfor']
+
+		ptype = self.myPath.data['ptype']
+		self.forLabel = QLabel()
+		self.forLabel.setTextFormat(1)
+		self.forLabel.setText("<big>Parameters for <b>"+forUse+"</b> Path type <b>"+ptype+"</b></big>")
+
+		self.initValLabel = QLabel(str(self.myPath.data['ival']))
+		self.initValSlide = vSlide(self.myPath.data['omin'],self.myPath.data['omax'],self.initValLabel,self.myPath.data['ival'],True,self)
+
+		orange = self.myPath.data['omax'] - self.myPath.data['omin']
+		ascale = 40 / orange
+		print("ORange: "+str(orange)+" arbitrary scaling :"+ str(ascale))
+		vminmax = int(ascale * orange)
+		self.initVelLabel = QLabel(str(self.myPath.data['scaling']))
+		self.initVelSlide = vSlide(-1 * vminmax,vminmax,self.initVelLabel,self.myPath.data['scaling'],False,self)
+
+		as2 = 500 / orange
+		print("ORange: "+str(orange)+" arbitrary scaling 2:"+ str(as2))
+		aminmax = int(as2 * orange)
+		self.accelLabel = QLabel(str(self.myPath.data['scaling2']))
+		self.accelSlide = vSlide(-1 * aminmax,aminmax,self.accelLabel,self.myPath.data['scaling2'],False, self)
+
+		self.btnSave = QPushButton()
+		self.btnSave.setText("Save")
+		self.btnSave.clicked.connect(self.saveOut)
+		self.btnSave.setEnabled(False)
+
+		self.btnCancel = QPushButton()
+		self.btnCancel.setText("Cancel")
+		self.btnCancel.clicked.connect(self.cancelOut)
+
+		outerVBox = QVBoxLayout()
+
+		outerVBox.addWidget(self.forLabel)
+
+		ivGBox = QGroupBox("Initial Value")
+		ivVBox = QVBoxLayout()
+		ivVBox.addWidget(self.initValLabel)
+		ivVBox.addWidget(self.initValSlide)
+		ivGBox.setLayout(ivVBox)
+		outerVBox.addWidget(ivGBox)
+
+		iVelGBox = QGroupBox("Initial Velocity Scaling")
+		iVelVBox = QVBoxLayout()
+		iVelVBox.addWidget(self.initVelLabel)
+		iVelVBox.addWidget(self.initVelSlide)
+		iVelGBox.setLayout(iVelVBox)
+		outerVBox.addWidget(iVelGBox)
+
+		accelGBox = QGroupBox("Acceleration")
+		accelVBox = QVBoxLayout()
+		accelVBox.addWidget(self.accelLabel)
+		accelVBox.addWidget(self.accelSlide)
+		accelGBox.setLayout(accelVBox)
+		outerVBox.addWidget(accelGBox)
+
+		bhbox = QHBoxLayout()
+		bhbox.addWidget(self.btnCancel)
+		bhbox.addWidget(self.btnSave)
+
+		outerVBox.addLayout(bhbox)
+
+		self.setLayout(outerVBox)
 
 # path editor, invoked by changes to pcombo, xsizeCombo or clicks on PEButton
 class pathEdit(QDialog):
@@ -1614,12 +1755,13 @@ class pathEdit(QDialog):
 
 		ptype = self.myPath.data['ptype']
 		if self.scaledFromTime:
-			self.myPath.data['timestep'] = float(self.tUnits1.text())
+			self.myPath.data['timestep'] = self.getTime(self.tUnits1,self.tUnitsCombo)
+
 		else:
 			self.myPath.data['timestep'] = 0
 
 		if self.useSecondaryTime:
-			self.myPath.data['ts2'] = float(self.tUnits2.text())
+			self.myPath.data['ts2'] = self.getTime(self.tUnits2,self.tUnits2Combo)
 		else:
 			self.myPath.data['ts2'] = 0
 
@@ -1651,13 +1793,30 @@ class pathEdit(QDialog):
 		self.setClean(True)
 		self.reject()
 
+	# time always stored in seconds at save time, but can be displayed at edit time
+	# in seconds or beats
+	def getTime(self,unitsText,unitsCombo):
+		if unitsCombo.currentText == 'seconds':
+			return float(unitsText.text())
+		else:
+			return beatsToTime(float(unitsText.text()))
+
+	def ctu(self,unitsText,unitsCombo):
+		if unitsCombo.currentText() == 'seconds':
+			# this is 'on change' so it must previously have been beats
+			s = beatsToTime(float(unitsText.text()))
+			unitsText.setText(str(s))
+		else:
+			b = timeToBeats(float(unitsText.text()))
+			unitsText.setText(str(b))
+
 	def changeTimeUnits(self):
 		self.setClean(False)
-		mess("Here we'd change the time units")
+		self.ctu(self.tUnits1,self.tUnitsCombo)
 
 	def changeTime2Units(self):
 		self.setClean(False)
-		mess("Here we'd change the time 2 units")
+		self.ctu(self.tUnits2,self.tUnits2Combo)
 
 	def initUI(self):
 		global bpm
@@ -1676,10 +1835,10 @@ class pathEdit(QDialog):
 		self.forLabel.setTextFormat(1)
 		self.forLabel.setText("<big>Parameters for <b>"+forUse+"</b> Path type <b>"+ptype+"</b></big>")
 
-		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble",'avwobble','vaccel']
+		self.scaledFromInput = ptype in [ "nflat","vflat","nfall","vfall","vwobble",'avwobble']
 
-		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble", 'avwobble','vaccel']
-		self.useSecondaryTime = ptype in [ "avwobble", "vaccel" ]
+		self.scaledFromTime = ptype in [ "sweep", "nfall", "vfall", "vwobble", 'avwobble']
+		self.useSecondaryTime = ptype in [ "avwobble" ]
 
 		timeLower = 1 / fRate # not much point (I *think*) in allowing a time period less than the frame rate
 		timeUpper = 20        # I can't see (for the moment) wanting any effect to take longer than 20 seconds. Mostly
@@ -1700,7 +1859,7 @@ class pathEdit(QDialog):
 		if self.scaledFromInput:
 			if ptype in [ "nflat", "nfall"]:
 				iscalecaption = "As Note varies from "
-			if ptype in ["vflat","vfall","vwobble","avwobble","vaccel"]:
+			if ptype in ["vflat","vfall","vwobble","avwobble"]:
 				iscalecaption = "As velocity varies from "
 
 		if self.scaledFromInput or self.scaledFromTime:
@@ -1804,8 +1963,6 @@ class pathEdit(QDialog):
 			if self.useSecondaryTime:
 				if ptype == 'avwobble':
 					self.t2Label = QLabel("Attenuate to 0 amplitude after")
-				elif ptype == 'vaccel':
-					self.t2Label = QLabel("Accelerate period (he says vaguely)")
 				else:
 					self.t2Label = QLabel("some generic time 2 thing")
 				self.tUnits2 = QLineEdit()
@@ -2201,7 +2358,24 @@ class vEditD(QDialog):
 			self.model._data[idx][3] = fname
 			setup['lastimagesource'] = os.path.dirname(fname)
 			checkSetupChange('lastimagesource',setup['lastimagesource'])
+			iw = self.noteMap.indexWidget(self.model.index(idx,2))
+			iw.setText("Remove Image")
+			iw.clicked.disconnect()
+			iw.clicked.connect(partial(self.removeImg, idx))
 			self.sd()
+		self.resumeTimer()
+
+	def removeImg(self,idx):
+		# tricky as we have to flip the function of the button too
+		self.midiTimer.stop()
+		self.model._data[idx][3] = '' # this isn't getting redrawn!!!
+		self.pv.setPixmap(QPixmap(self.emptyPath).scaled(self.PVWidth,self.PVHeight,2,1))
+		self.pvPath.setText('')
+		iw = self.noteMap.indexWidget(self.model.index(idx,2))
+		iw.setText("Select Image")
+		iw.clicked.disconnect()
+		iw.clicked.connect(partial(self.getImg, idx))
+		self.sd()
 		self.resumeTimer()
 
 	def getDefImg(self,idx):
@@ -2233,8 +2407,12 @@ class vEditD(QDialog):
 	def noteRowAdd(self,idx):
 		# This only adds the button to a pre-existing row created by
 		# the SetModel call. It doesn't actually add a row
-		btnGetImg = QPushButton("Select image")
-		btnGetImg.clicked.connect(partial(self.getImg, idx))
+		if self.model._data[idx][3] == '':
+			btnGetImg = QPushButton("Select Image")
+			btnGetImg.clicked.connect(partial(self.getImg, idx))
+		else:
+			btnGetImg = QPushButton('Remove Image')
+			btnGetImg.clicked.connect(partial(self.removeImg, idx))
 		self.noteMap.setIndexWidget(self.model.index(idx, 2), btnGetImg)
 
 	def toggleSizeControl(self):
@@ -2425,10 +2603,10 @@ class vEditD(QDialog):
 		previewLabel = QLabel("Image")
 		self.pv = QLabel()
 		self.pvPath = QLabel()
-		emptyPath = amenicDir+"/Empty.png"
+		self.emptyPath = amenicDir+"/Empty.png"
 		self.PVWidth = 180
 		self.PVHeight = 180
-		self.pv.setPixmap(QPixmap(emptyPath).scaled(self.PVWidth,self.PVHeight,2,1))
+		self.pv.setPixmap(QPixmap(self.emptyPath).scaled(self.PVWidth,self.PVHeight,2,1))
 
 		# Layout
 		hboxouter = QHBoxLayout()
@@ -3050,8 +3228,9 @@ class AmenicMain(QMainWindow):
 		if str(mess) != "None":
 			self.lastMess = mess
 			# convert from a float number of seconds to and integer number of milliseconds
-			ms = int(mess.time * 1000)
-			QTimer.singleShot(ms,self.playslot)
+			if not self.stopFlag:
+				ms = int(mess.time * 1000)
+				QTimer.singleShot(ms,self.playslot)
 		elif self.stopFlag:
 			return
 
@@ -3118,10 +3297,6 @@ class AmenicMain(QMainWindow):
 			msg = self.inport.poll()
 		self.startPerfTimer()
 
-	# this is the routine that kicks off all the facets of 'playing'. I launches the reference audio track
-	# it starts the midi/performance play to soundboard, it starts the performance listener, sending
-	# output to soundboard, and it starts the camera that renders the soundboard and displays to screen.
-
 	def setInport(self):
 		global inPortName
 
@@ -3133,6 +3308,9 @@ class AmenicMain(QMainWindow):
 			if not self.setupTime:
 				checkSetupChange('preferredmidiinput',"<none>")
 
+	# this is the routine that kicks off all the facets of 'playing'. I launches the reference audio track
+	# it starts the midi/performance play to soundboard, it starts the performance listener, sending
+	# output to soundboard, and it starts the camera that renders the soundboard and displays to screen.
 	def play(self):
 		global CVMap
 		global theatre
@@ -3173,6 +3351,7 @@ class AmenicMain(QMainWindow):
 			else:
 				self.checkPerfPlayable(False)
 			if perfPlayable:
+				self.lastMess = None
 				# create camera
 				board = soundBoard('realtime')
 				self.gateTimerPeriod = int(1000 / fRate)

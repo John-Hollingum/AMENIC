@@ -74,17 +74,19 @@ The reason for failure to delete is because of the creation of multiple forchan0
 Just a problem with the delete strategy by the look of it\
 \
 Features\
+current time unit switching isn\'92t right as it doesn\'92t allow for tempo changes. Rather than always storing in seconds, it should store in beats or seconds and only convert beats to seconds on the fly.\
+Beat-based timing\
+Setting bpm and bpb\
+initial beat registration\
+Beat/bar triggered voices\
+images pathed by things other than nflat\
 \
-Need better descriptions/explanations around UI for vaccel, preferably the ability to express scaling factors as pixels/s and pixels/s/s \
-Need control of both initial absolute value as well as initial velocity\
-Better expression of accel/decel \
 Positioning on centre of image rather than top left -maybe ability to identify \'91locating point\'92\
-Maybe control vbox3 sizing in veditd rather better\
+Control vbox3 sizing in veditd rather better\
 \
-Bug\
+All of the beat-based timing stuff is only really testable with a flexible tempo track. I need some utility to make a \'91phantom tempo track\'92\
 \
-Occasionally (I don\'92t know what the occasion is) the playback timing goes screwy \
-\
+So rallax \'85 fine as far as it goes, but it would be interesting to try it *recording* sound rather than tapping to playback, typically with a singer tapping while singing.\
 \
 \
 \
